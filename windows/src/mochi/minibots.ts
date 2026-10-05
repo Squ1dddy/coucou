@@ -77,6 +77,13 @@ export function tickMiniBots(dt: number) {
   for (const mb of live.values()) {
     const ctx = mb.canvas.getContext("2d");
     if (!ctx) continue;
+    // Moving to a display with another scale changes the pixel ratio: resize the
+    // backing store, or the scaled drawing is cropped by the old canvas size.
+    const px = Math.round(mb.cssSize * dpr);
+    if (mb.canvas.width !== px) {
+      mb.canvas.width = px;
+      mb.canvas.height = px;
+    }
     mb.engine.update(dt);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, mb.cssSize, mb.cssSize);

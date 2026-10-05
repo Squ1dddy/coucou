@@ -12,7 +12,8 @@ pub struct Settings {
     pub auto_close_interval: f64,
     pub absence_interval: f64,
     pub active_integrations: Vec<String>,
-    /// "primary" = the main display, "cursor" = whichever display the mouse is on.
+    /// "primary" = the main display, "secondary" = the first other display
+    /// (the main one when there is only one), "cursor" = whichever display the mouse is on.
     pub screen: String,
     pub autostart: bool,
     pub hooks_installed: bool,
@@ -39,7 +40,7 @@ impl Default for Settings {
                 "integration_vercel".into(),
                 "integration_github".into(),
             ],
-            screen: "primary".into(),
+            screen: "secondary".into(),
             autostart: false,
             hooks_installed: false,
             model: default_model(),

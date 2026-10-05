@@ -384,6 +384,7 @@ function generalSection(): HTMLElement {
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: "Main display" }),
+    h("option", { value: "secondary", text: "Second display" }),
     h("option", { value: "cursor", text: "Display under the cursor" }),
   );
   screen.value = settings.screen;

@@ -114,9 +114,17 @@ fn monitor_contains(m: &Monitor, x: f64, y: f64) -> bool {
         && y < (p.y + s.height as i32) as f64
 }
 
-/// The display the island lives on: the primary one, or the one under the cursor.
+/// The display the island lives on: the primary one, the first other one
+/// ("secondary"), or the one under the cursor. Falls back to the primary display.
 fn target_monitor(app: &AppHandle, pref: &str) -> Option<Monitor> {
     let monitors = app.available_monitors().ok()?;
+    let primary = app.primary_monitor().ok().flatten();
+    if pref == "secondary" {
+        let primary_pos = primary.as_ref().map(|m| *m.position());
+        if let Some(m) = monitors.iter().find(|m| Some(*m.position()) != primary_pos) {
+            return Some(m.clone());
+        }
+    }
     if pref == "cursor" {
         if let Some((cx, cy)) = cursor_physical() {
             if let Some(m) = monitors.iter().find(|m| monitor_contains(m, cx, cy)) {
@@ -124,10 +132,23 @@ fn target_monitor(app: &AppHandle, pref: &str) -> Option<Monitor> {
             }
         }
     }
-    app.primary_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| monitors.into_iter().next())
+    primary.or_else(|| monitors.into_iter().next())
+}
+
+/// The display preference in effect right now: the saved setting, flipped
+/// between "primary" and "secondary" while the tray's "Move to other display"
+/// swap is on. The swap is never saved, so every launch starts from the setting.
+pub fn effective_screen(app: &AppHandle) -> String {
+    let Some(shared) = app.try_state::<crate::Shared>() else { return "primary".into() };
+    let pref = shared.settings.lock().unwrap().screen.clone();
+    if !shared.swapped.load(Ordering::Relaxed) {
+        return pref;
+    }
+    match pref.as_str() {
+        "primary" => "secondary".into(),
+        "secondary" => "primary".into(),
+        _ => pref,
+    }
 }
 
 pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
@@ -177,14 +198,40 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let _ = win.set_always_on_top(true);
 }
 
+/// Moves the island to the display `effective_screen` names. Crossing to a
+/// display with a different scale makes Windows resize the window on its own
+/// (WM_DPICHANGED) after we have sized it, which leaves the panel too big or too
+/// small and the island off-centre. So the geometry is applied again once the
+/// move has settled, at the new display's scale.
+pub fn move_to_display(app: &AppHandle) {
+    let place = |app: &AppHandle| {
+        let Some(shared) = app.try_state::<crate::Shared>() else { return };
+        let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
+        apply_geometry(app, &effective_screen(app), collapsed);
+        refresh_click_through(app, &shared.gate);
+    };
+    place(app);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(250));
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let before = window(&handle).and_then(|w| w.outer_size().ok());
+            place(&handle);
+            let after = window(&handle).and_then(|w| w.outer_size().ok());
+            crate::log::line(format!(
+                "display move settled: {:?} -> {:?}",
+                before.map(|s| (s.width, s.height)),
+                after.map(|s| (s.width, s.height)),
+            ));
+        });
+    });
+}
+
 /// Position, size and scale of the monitor the island lives on. Any change here
 /// means the island has to be placed again.
 fn current_screen_key(app: &AppHandle) -> Option<(i32, i32, u32, u32, u64)> {
-    let pref = app
-        .try_state::<crate::Shared>()
-        .map(|s| s.settings.lock().unwrap().screen.clone())
-        .unwrap_or_else(|| "primary".into());
-    let m = target_monitor(app, &pref)?;
+    let m = target_monitor(app, &effective_screen(app))?;
     let p = m.position();
     let size = m.size();
     Some((p.x, p.y, size.width, size.height, m.scale_factor().to_bits()))

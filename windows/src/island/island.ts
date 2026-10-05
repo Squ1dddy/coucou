@@ -65,6 +65,8 @@ export class Island {
   private lastFrame = 0;
   private dirty = true;
   private canvasPx = 0;
+  /** Pixel ratio the bot canvas was sized for; changes when the island moves display. */
+  private canvasDpr = 0;
 
   // Rust starts the window at full size so the launch greeting has room.
   private collapsed = false;
@@ -702,6 +704,12 @@ export class Island {
       const gctx = this.greetingCanvas.getContext("2d");
       if (gctx) {
         const dpr = Math.min(2, window.devicePixelRatio || 1);
+        // Follow a pixel ratio change after a move to another display.
+        const gw = Math.round(EXPANDED_W * dpr);
+        if (this.greetingCanvas.width !== gw) {
+          this.greetingCanvas.width = gw;
+          this.greetingCanvas.height = Math.round(150 * dpr);
+        }
         gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         this.greeting.draw(gctx);
       }
@@ -774,8 +782,9 @@ export class Island {
     const w = Math.max(1, Math.round(size));
     const hCss = w + BOT_OVERHANG;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (this.canvasPx !== w) {
+    if (this.canvasPx !== w || this.canvasDpr !== dpr) {
       this.canvasPx = w;
+      this.canvasDpr = dpr;
       this.botCanvas.width = Math.round(w * dpr);
       this.botCanvas.height = Math.round(hCss * dpr);
       this.botCanvas.style.width = `${w}px`;

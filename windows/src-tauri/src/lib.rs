@@ -13,7 +13,7 @@ mod settings;
 mod tray;
 
 use std::process::Command;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -30,6 +30,8 @@ use settings::Settings;
 pub struct Shared {
     pub settings: Mutex<Settings>,
     pub gate: Arc<PollGate>,
+    /// Tray "Move to other display" swap, for this run only (see island::effective_screen).
+    pub swapped: AtomicBool,
 }
 
 #[derive(Serialize)]
@@ -49,7 +51,7 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
     let mut settings = shared.settings.lock().unwrap().clone();
     // The real state of ~/.claude/settings.json wins over whatever we stored.
     settings.hooks_installed = hooks::status().installed;
-    let screen = island::screen_info(&app, &settings.screen);
+    let screen = island::screen_info(&app, &island::effective_screen(&app));
     BootInfo {
         settings,
         screen,
@@ -79,8 +81,9 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         }
     }
     if screen_changed {
-        let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
-        island::apply_geometry(&app, &settings.screen, collapsed);
+        // A display picked in Settings replaces any tray swap.
+        shared.swapped.store(false, Ordering::Relaxed);
+        island::move_to_display(&app);
     }
     // Keep the other window in step (island ⇄ settings window).
     let _ = app.emit("settings-changed", settings);
@@ -90,7 +93,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
 /// cursor poll; anything else → full panel and 60 Hz polling.
 #[tauri::command]
 fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
-    let pref = shared.settings.lock().unwrap().screen.clone();
+    let pref = island::effective_screen(&app);
     shared.gate.collapsed.store(collapsed, Ordering::Relaxed);
     island::apply_geometry(&app, &pref, collapsed);
     // The wake strip must always take the mouse, and a resize invalidates the flag.
@@ -119,7 +122,7 @@ fn focus_window(app: AppHandle, focused: bool) {
 
 #[tauri::command]
 fn reposition(app: AppHandle, shared: State<Shared>) {
-    let pref = shared.settings.lock().unwrap().screen.clone();
+    let pref = island::effective_screen(&app);
     let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
     island::apply_geometry(&app, &pref, collapsed);
 }
@@ -343,6 +346,15 @@ fn create_settings_window(app: &AppHandle) {
     }
 }
 
+/// Tray "Move to other display": flips the island between the main display and
+/// the other one until the next launch or the next display picked in Settings.
+pub fn swap_display(app: &AppHandle) {
+    let Some(shared) = app.try_state::<Shared>() else { return };
+    shared.swapped.fetch_xor(true, Ordering::Relaxed);
+    log::line(format!("tray: island moved to {} display", island::effective_screen(app)));
+    island::move_to_display(app);
+}
+
 pub fn show_settings_window(app: &AppHandle) {
     let Some(win) = app.get_webview_window("settings") else {
         log::line("settings window missing");
@@ -371,6 +383,7 @@ pub fn run() {
         .manage(Shared {
             settings: Mutex::new(loaded.clone()),
             gate: gate.clone(),
+            swapped: AtomicBool::new(false),
         })
         .manage(Pending::default())
         .manage(Chat::default())

@@ -87,7 +87,7 @@ export interface Settings {
   autoCloseInterval: number;
   absenceInterval: number;
   activeIntegrations: string[];
-  screen: "primary" | "cursor";
+  screen: "primary" | "secondary" | "cursor";
   autostart: boolean;
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
@@ -102,7 +102,7 @@ export const DEFAULT_SETTINGS: Settings = {
   activeIntegrations: [
     "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
   ],
-  screen: "primary",
+  screen: "secondary",
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
