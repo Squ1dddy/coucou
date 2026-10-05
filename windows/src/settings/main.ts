@@ -6,6 +6,8 @@ import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, withKnownIntegrations, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
+import { BotEngine } from "../mochi/engine";
+import { OUTFIT_NAMES, OUTFIT_PICKER_ORDER, parseOutfitSelection, resolveOutfit } from "../mochi/outfits";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -451,6 +453,38 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  // Mochi outfit: a select plus a still preview of Mochi wearing it.
+  const outfit = h("select", {}) as HTMLSelectElement;
+  for (const id of OUTFIT_PICKER_ORDER) outfit.append(h("option", { value: id, text: OUTFIT_NAMES[id] }));
+  outfit.value = parseOutfitSelection(settings.outfit);
+
+  const PREVIEW = 96;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const preview = h("canvas", { style: `width:${PREVIEW}px;height:${PREVIEW}px;flex:none` }) as HTMLCanvasElement;
+  preview.width = Math.round(PREVIEW * dpr);
+  preview.height = Math.round(PREVIEW * dpr);
+  const bot = new BotEngine();
+  const hint = h("span", { class: "hint" });
+  function drawPreview() {
+    const sel = parseOutfitSelection(outfit.value);
+    const worn = resolveOutfit(sel, new Date());
+    bot.setAccessory(worn === "none" ? null : worn, false);
+    hint.textContent = sel === "auto"
+      ? `Today: ${OUTFIT_NAMES[worn]}. Changes with the seasons.`
+      : "";
+    const ctx = preview.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, PREVIEW, PREVIEW);
+    bot.draw(ctx, PREVIEW, PREVIEW);
+  }
+  outfit.addEventListener("change", () => {
+    settings.outfit = outfit.value;
+    drawPreview();
+    void save();
+  });
+  drawPreview();
+
   return h(
     "section",
     {},
@@ -468,6 +502,12 @@ function generalSection(): HTMLElement {
     h("div", { class: "row" },
       h("label", { text: "Island lives on" }),
       screen,
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Mochi outfit" }),
+      outfit,
+      preview,
+      hint,
     ),
     h("div", { class: "row" },
       h("label", { text: "Launch at startup" }),

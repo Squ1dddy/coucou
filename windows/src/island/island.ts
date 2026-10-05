@@ -14,6 +14,7 @@ import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
+import { currentOutfit, setOutfitSelection } from "../mochi/outfits";
 import { createMiniBot, emoteMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq } from "../upload/sequence";
@@ -1085,7 +1086,8 @@ export class Island {
 
     const focus = State.focusTask;
     this.engine.bodyColor = focus?.isIntegration ? hexToRGB(focus.color) : null;
-    this.engine.setAccessory(focus?.isIntegration ? focus.accessory ?? null : null);
+    // Integrations wear only their brand prop (or nothing); Claude bots wear the outfit.
+    this.engine.setAccessory(focus?.isIntegration ? focus.accessory ?? null : currentOutfit());
     this.engine.particleOverhang = BOT_OVERHANG;
     this.engine.lookX = this.lookX();
     this.engine.lookY = this.lookY();
@@ -1182,6 +1184,7 @@ export class Island {
 
   /** Applies settings coming from Rust at boot. */
   applySettings() {
+    setOutfitSelection(State.settings.outfit);
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
