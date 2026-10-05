@@ -3,6 +3,7 @@
 // Difference from macOS: no terminal filter. On Windows the hook fires from any
 // terminal (Windows Terminal, VS Code, PowerShell…) and all of them are handled.
 
+import { describeActivity } from "../core/activity";
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
@@ -58,38 +59,6 @@ function lastPathComponent(p: string): string {
   const cleaned = p.replace(/[\\/]+$/, "");
   const idx = Math.max(cleaned.lastIndexOf("\\"), cleaned.lastIndexOf("/"));
   return idx >= 0 ? cleaned.slice(idx + 1) : cleaned;
-}
-
-/** frenchStep() — same labels as the macOS app. */
-const TOOL_LABELS: Record<string, string> = {
-  Bash: "Exécute",
-  Read: "Lit",
-  Write: "Écrit",
-  Edit: "Modifie",
-  Glob: "Cherche",
-  Grep: "Recherche",
-  WebSearch: "Recherche web",
-  WebFetch: "Récupère",
-  TodoWrite: "Tâches",
-  Task: "Agent",
-  LS: "Liste",
-  MultiEdit: "Modifie",
-  NotebookEdit: "Notebook",
-  PowerShell: "Exécute",
-};
-
-function stepLabel(tool: string, input: Record<string, unknown>): string {
-  const label = TOOL_LABELS[tool] ?? tool;
-  const str = (k: string) => (typeof input[k] === "string" ? (input[k] as string) : null);
-  const cmd = str("command");
-  if (cmd) return `${label} · ${cmd.slice(0, 40)}`;
-  const path = str("path");
-  if (path) return `${label} · ${lastPathComponent(path)}`;
-  const file = str("file_path");
-  if (file) return `${label} · ${lastPathComponent(file)}`;
-  const query = str("query");
-  if (query) return `${label} · ${query.slice(0, 40)}`;
-  return label;
 }
 
 /**
@@ -203,7 +172,7 @@ function handleHook(island: Island, payload: HookPayload) {
       ensurePill();
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
-      State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
+      State.appendStep(agentId, describeActivity(tool, payload.tool_input ?? {}));
       surface("overview", false);
       break;
     }
