@@ -80,8 +80,35 @@ const PENDING_TTL_MS = 5 * 60 * 1000;
 export const SUBAGENT_TTL_MS = 30 * 60 * 1000;
 
 /** "inherit" and the general-purpose agent run on the parent's model. */
-/** Stage name for a Claude session: title, else first prompt, else null (use the task name). */
+/** Names the user gave sessions (double-click the stage name), by session id. Kept across restarts. */
+const SESSION_NAMES_KEY = "coucou.sessionNames";
+const MAX_SESSION_NAMES = 100;
+const sessionNames: Record<string, string> = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(SESSION_NAMES_KEY) ?? "{}") ?? {};
+  } catch {
+    return {};
+  }
+})();
+
+/** Sets (or, when blank, clears) the user's name for a session. */
+export function setSessionName(sessionId: string, name: string) {
+  const clean = name.trim().replace(/\s+/g, " ").slice(0, 60);
+  delete sessionNames[sessionId];
+  if (clean) sessionNames[sessionId] = clean;
+  // Oldest first (insertion order): drop the oldest past the cap.
+  const ids = Object.keys(sessionNames);
+  for (const id of ids.slice(0, Math.max(0, ids.length - MAX_SESSION_NAMES))) delete sessionNames[id];
+  try {
+    localStorage.setItem(SESSION_NAMES_KEY, JSON.stringify(sessionNames));
+  } catch {
+    // Not saved past this run; the name still shows now.
+  }
+}
+
+/** Stage name for a Claude session: the user's name, else title, else first prompt, else null (use the task name). */
 export function sessionLabel(t: AgentTask): string | null {
+  if (t.sessionId && sessionNames[t.sessionId]) return sessionNames[t.sessionId];
   if (!t.label || t.label.session !== t.sessionId) return null;
   return t.label.title ?? t.label.firstPrompt;
 }

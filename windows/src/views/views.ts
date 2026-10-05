@@ -4,7 +4,8 @@
 
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
-import { State, sessionLabel, type AgentTask } from "../core/state";
+import { State, sessionLabel, setSessionName, type AgentTask } from "../core/state";
+import { Bridge } from "../core/bridge";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { WheelStepper } from "../core/carousel";
 import { viewedSubagent } from "./claude";
@@ -217,6 +218,61 @@ function buildOverview(actions: ViewActions): ViewHost {
   let cardKey = "";
   /** False while the view is off screen, so a focus change then does not animate. */
   let shown = false;
+  /** Set while the stage name is an input: ends the rename (saving or not). */
+  let endRename: ((save: boolean, quiet?: boolean) => void) | null = null;
+
+  function renderName(task: AgentTask | null) {
+    clear(nameEl);
+    nameEl.removeAttribute("title");
+    const viewing = task ? viewedSubagent(task)?.sub : null;
+    if (viewing) {
+      // Drilled in: the Mochi on the stage is the subagent, named for its job.
+      nameEl.append(h("span", { class: "stage-name-main", text: viewing.description }));
+      nameEl.append(h("span", { class: "stage-name-sub", text: viewing.type }));
+    } else if (task) {
+      // A Claude session goes by its name (yours, else title, else first prompt);
+      // "Claude Code" moves to the tooltip.
+      const label = task.source === "claudeCode" ? sessionLabel(task) : null;
+      const main = h("span", { class: "stage-name-main", text: label ?? task.name });
+      nameEl.append(main);
+      if (task.project) nameEl.append(h("span", { class: "stage-name-sub", text: task.project }));
+      if (label) nameEl.title = `${task.name} · ${label}`;
+      if (task.source === "claudeCode" && task.sessionId) {
+        nameEl.title = `${nameEl.title || task.name}\nDouble-click to rename`;
+        main.addEventListener("dblclick", () => startRename(task, main));
+      }
+    }
+  }
+
+  /** Double-click a Claude session's stage name: type the name you want shown for it. */
+  function startRename(task: AgentTask, main: HTMLElement) {
+    const sessionId = task.sessionId;
+    if (!sessionId || endRename) return;
+    const input = h("input", { class: "stage-name-input", maxlength: 60, spellcheck: "false" });
+    input.value = sessionLabel(task) ?? "";
+    input.placeholder = "Session name";
+    main.replaceWith(input);
+    // The island only takes keyboard focus while a text field needs it (as for the chat).
+    void Bridge.focusWindow(true);
+    window.setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 120);
+    // `quiet` when called from inside a sync, which redraws anyway.
+    endRename = (save, quiet = false) => {
+      endRename = null;
+      // Blank saves as "no name": back to the title or first prompt.
+      if (save) setSessionName(sessionId, input.value);
+      void Bridge.focusWindow(false);
+      if (!quiet) State.notify();
+    };
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") endRename?.(true);
+      else if (e.key === "Escape") endRename?.(false);
+    });
+    input.addEventListener("blur", () => endRename?.(true));
+  }
 
   const hooks: IntegrationCardHooks = {
     get detailOpen() {
@@ -242,6 +298,7 @@ function buildOverview(actions: ViewActions): ViewHost {
     el,
     leave() {
       shown = false;
+      endRename?.(true, true);
     },
     sync() {
       const task = State.focusTask;
@@ -263,22 +320,11 @@ function buildOverview(actions: ViewActions): ViewHost {
         lastFocus = task?.id ?? null;
         detailOpen = false;
         cardKey = "";
+        endRename?.(true, true);
       }
 
-      clear(nameEl);
-      nameEl.removeAttribute("title");
-      const viewing = task ? viewedSubagent(task)?.sub : null;
-      if (viewing) {
-        // Drilled in: the Mochi on the stage is the subagent, named for its job.
-        nameEl.append(h("span", { class: "stage-name-main", text: viewing.description }));
-        nameEl.append(h("span", { class: "stage-name-sub", text: viewing.type }));
-      } else if (task) {
-        // A Claude session goes by its title (or first prompt); "Claude Code" moves to the tooltip.
-        const label = task.source === "claudeCode" ? sessionLabel(task) : null;
-        nameEl.append(h("span", { class: "stage-name-main", text: label ?? task.name }));
-        if (task.project) nameEl.append(h("span", { class: "stage-name-sub", text: task.project }));
-        if (label) nameEl.title = `${task.name} · ${label}`;
-      }
+      // Mid-rename the name stays an input; everything else still updates.
+      if (!endRename) renderName(task);
 
       // Every pill shows its own card, exactly like IntegrationCardView; Claude
       // Code entries (main or extra session) get the Claude panel.

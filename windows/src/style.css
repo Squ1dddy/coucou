@@ -428,6 +428,21 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Renaming a Claude session: the name turns into this field, same type as the name. */
+.stage-name-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 0 1px;
+  border: 0;
+  border-bottom: 1px solid var(--dim-3);
+  background: transparent;
+  outline: none;
+  text-align: center;
+  font: 600 12px var(--font);
+  color: var(--ink);
+}
+
 .stage-name-sub {
   margin-top: 1px;
   font: 400 10.5px var(--font);
