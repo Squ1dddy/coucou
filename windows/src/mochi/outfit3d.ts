@@ -171,7 +171,7 @@ export interface AccessoryOpts {
 }
 
 const SHELL = "#111317";
-const RIM = "#0B0C0F";
+const CUSHION = "#2A2D33";
 
 /**
  * Draws one pass of an accessory. `ctx` is already inside the body transform.
@@ -194,8 +194,8 @@ function inPass(z: number, behind: boolean) {
 
 // Headphones ------------------------------------------------------------------
 
-const BAND_S = 1.06;
-const BAND_Z = -0.06;
+const BAND_S = 1.025;
+const BAND_Z = -0.02;
 
 function bandPoint(a: number): Vec3 {
   // Side-to-side great circle (the x-y plane), following the head's superellipse.
@@ -206,11 +206,21 @@ function bandPoint(a: number): Vec3 {
   return [px * BAND_S, py * BAND_S, BAND_Z];
 }
 
+function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh: number, r: number) {
+  const rr = Math.max(0, Math.min(r, W / 2, Hh / 2));
+  x.beginPath();
+  x.moveTo(X + rr, Y);
+  x.arcTo(X + W, Y, X + W, Y + Hh, rr);
+  x.arcTo(X + W, Y + Hh, X, Y + Hh, rr);
+  x.arcTo(X, Y + Hh, X, Y, rr);
+  x.arcTo(X, Y, X + W, Y, rr);
+  x.closePath();
+}
+
 function drawHeadphones(x: CanvasRenderingContext2D, H: MochiH, behind: boolean, o: AccessoryOpts) {
   const R = H.R;
-  const simple = o.mini || R < 16;
-  const dark = o.mini ? o.miniInk : SHELL;
-  const rim = o.mini ? o.miniInk : RIM;
+  const flat = o.mini;
+  const dark = flat ? o.miniInk : SHELL;
 
   x.save();
   x.scale(o.scale, o.scale);
@@ -233,74 +243,44 @@ function drawHeadphones(x: CanvasRenderingContext2D, H: MochiH, behind: boolean,
   x.lineCap = "round";
   x.lineJoin = "round";
   x.strokeStyle = dark;
-  x.lineWidth = R * (o.mini ? 0.17 : 0.11);
+  x.lineWidth = R * (flat ? 0.22 : 0.14);
   x.stroke(bandPath(0, 0));
-  if (!simple) {
-    x.strokeStyle = "rgba(255,255,255,0.20)";
-    x.lineWidth = R * 0.03;
-    x.stroke(bandPath(R * 0.025, -R * 0.03));
+  if (!flat) {
+    x.strokeStyle = "rgba(255,255,255,0.22)";
+    x.lineWidth = R * 0.04;
+    x.stroke(bandPath(R * 0.03, -R * 0.035));
   }
 
-  // Ear cups: a stack of discs across the cup thickness, painted far to near.
-  const ru = o.mini ? 0.4 : 0.31; // vertical radius (head-local)
-  const rv = o.mini ? 0.3 : 0.23; // depth radius
-  const o0 = mProjRoll(H, [0, 0, 0]);
-  const vy = mProjRoll(H, [0, 1, 0]);
-  const vz = mProjRoll(H, [0, 0, 1]);
-  const steps = o.mini ? 2 : 5;
+  // Ear cups: screen-space pads centred on the head's side, straddling the silhouette.
+  const cw = R * (flat ? 0.34 : 0.26);
+  const ch = R * (flat ? 0.5 : 0.46);
   for (const sd of [-1, 1]) {
-    const c = mProjRoll(H, [sd * 1.12, 0, 0]);
+    const c = mProjRoll(H, [sd * 1.0, 0.06, 0]);
     if (!inPass(c.z, behind)) continue;
-    const discs: { p: P3; k: number }[] = [];
-    for (let k = 0; k < steps; k++) {
-      const t = k / (steps - 1);
-      discs.push({ p: mProjRoll(H, [sd * (1.03 + 0.17 * t), 0, 0]), k });
-    }
-    discs.sort((a, b) => a.p.z - b.p.z);
-    discs.forEach(({ p, k }, idx) => {
-      const outer = k === steps - 1;
-      x.save();
-      x.transform(
-        vy.x - o0.x, vy.y - o0.y, vz.x - o0.x, vz.y - o0.y, p.x, p.y,
-      );
-      x.beginPath();
-      x.ellipse(0, 0, ru, rv, 0, 0, Math.PI * 2);
-      x.fillStyle = outer ? dark : rim;
-      x.fill();
-      if (outer && !simple) {
-        x.lineWidth = 0.035;
-        x.strokeStyle = rim;
-        x.stroke();
-        if (idx === discs.length - 1) {
-          x.beginPath();
-          x.ellipse(-ru * 0.15, -rv * 0.18, ru * 0.5, rv * 0.32, -0.5, 0, Math.PI * 2);
-          x.fillStyle = "rgba(255,255,255,0.16)";
-          x.fill();
-        }
-      }
-      x.restore();
-    });
+    rrect(x, c.x - cw / 2, c.y - ch / 2, cw, ch, cw / 2);
+    x.fillStyle = dark;
+    x.fill();
+    if (flat) continue;
+    // cushion on the side facing the head
+    const iw = cw * 0.5, ih = ch * 0.78;
+    rrect(x, c.x - sd * cw * 0.28 - iw / 2, c.y - ih / 2, iw, ih, iw / 2);
+    x.fillStyle = CUSHION;
+    x.fill();
+    // soft highlight, top right
+    x.beginPath();
+    x.ellipse(c.x + cw * 0.12, c.y - ch * 0.28, cw * 0.14, ch * 0.09, -0.4, 0, Math.PI * 2);
+    x.fillStyle = "rgba(255,255,255,0.20)";
+    x.fill();
   }
   x.restore();
 }
 
 // Calendar page ---------------------------------------------------------------
 
-const CAL_Y = -0.4;
-const CAL_LON = 0.9;
-const CAL_S = 1.03;
-const CAL_TILT = -0.12;
-
-function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh: number, r: number) {
-  const rr = Math.max(0, Math.min(r, W / 2, Hh / 2));
-  x.beginPath();
-  x.moveTo(X + rr, Y);
-  x.arcTo(X + W, Y, X + W, Y + Hh, rr);
-  x.arcTo(X + W, Y + Hh, X, Y + Hh, rr);
-  x.arcTo(X, Y + Hh, X, Y, rr);
-  x.arcTo(X, Y, X + W, Y, rr);
-  x.closePath();
-}
+const CAL_Y = -0.45;
+const CAL_LON = 1.0;
+const CAL_S = 1.0;
+const CAL_TILT = -0.14;
 
 function drawCalendar(x: CanvasRenderingContext2D, H: MochiH, behind: boolean, o: AccessoryOpts) {
   const R = H.R;
@@ -309,67 +289,75 @@ function drawCalendar(x: CanvasRenderingContext2D, H: MochiH, behind: boolean, o
   const c = mProjRoll(H, surf);
   if (!inPass(c.z, behind)) return;
 
-  // Card plane: tangent to the head at the anchor. Screen basis from the projected
-  // "right" (along longitude) and "up" (along y) directions, so yaw, pitch and roll
-  // foreshorten the card with the head.
+  // Card plane: tangent to the head at the anchor, so yaw, pitch and roll
+  // foreshorten the card with the head. Card space is 1 x 1 (a unit square).
   const o0 = mProjRoll(H, [0, 0, 0]);
   const right = mProjRoll(H, [Math.cos(CAL_LON), 0, -Math.sin(CAL_LON)]);
   const up = mProjRoll(H, [0, 1, 0]);
-
-  const w = o.mini ? 0.62 : 0.44;
-  const h = o.mini ? 0.62 : 0.46;
-  const s = o.scale;
+  // Size from the rest pose, so the page is a stable fraction of R.
+  const r0 = makeH(R);
+  const p0 = mProjRoll(r0, [0, 0, 0]);
+  const lr = Math.hypot(mProjRoll(r0, [Math.cos(CAL_LON), 0, -Math.sin(CAL_LON)]).x - p0.x,
+    mProjRoll(r0, [Math.cos(CAL_LON), 0, -Math.sin(CAL_LON)]).y - p0.y);
+  const lu = Math.hypot(mProjRoll(r0, [0, 1, 0]).x - p0.x, mProjRoll(r0, [0, 1, 0]).y - p0.y);
+  const wPx = R * (o.mini ? 0.7 : 0.62);
+  const hPx = R * (o.mini ? 0.7 : 0.66);
+  const kx = wPx / lr, ky = hPx / lu;
 
   x.save();
   x.transform(
     right.x - o0.x, right.y - o0.y, -(up.x - o0.x), -(up.y - o0.y), c.x, c.y,
   );
   x.rotate(CAL_TILT);
-  x.scale(s, s);
+  x.scale(kx * o.scale, ky * o.scale);
+  // Unit card space, 1 wide x 1 tall, centred on the origin.
+  const px = 1 / kx; // one screen pixel in card-x units (approx, for stroke widths)
 
   if (o.mini) {
     x.fillStyle = "#FFFFFF";
-    x.fillRect(-w / 2, -h / 2, w, h);
+    x.fillRect(-0.5, -0.5, 1, 1);
     x.fillStyle = "#EA4335";
-    x.fillRect(-w / 2, -h / 2, w, h * 0.34);
+    x.fillRect(-0.5, -0.5, 1, 0.35);
     x.restore();
     return;
   }
 
+  const cr = 0.09;
   // Soft contact shadow where the page meets the head.
-  rrect(x, -w / 2 + 0.025, -h / 2 + 0.04, w, h, 0.06);
+  rrect(x, -0.5 + 0.04, -0.5 + 0.06, 1, 1, cr);
   x.fillStyle = "rgba(30,40,70,0.10)";
   x.fill();
 
-  // Page body
-  rrect(x, -w / 2, -h / 2, w, h, 0.06);
+  rrect(x, -0.5, -0.5, 1, 1, cr);
   x.fillStyle = "#FFFFFF";
   x.fill();
 
-  // Red top strip, clipped to the page's rounded corners
   x.save();
-  rrect(x, -w / 2, -h / 2, w, h, 0.06);
+  rrect(x, -0.5, -0.5, 1, 1, cr);
   x.clip();
   x.fillStyle = "#EA4335";
-  x.fillRect(-w / 2, -h / 2, w, h * 0.3);
+  x.fillRect(-0.5, -0.5, 1, 0.3);
   x.restore();
 
-  rrect(x, -w / 2, -h / 2, w, h, 0.06);
-  x.lineWidth = 0.014;
+  rrect(x, -0.5, -0.5, 1, 1, cr);
+  x.lineWidth = Math.max(0.02, px * 0.6);
   x.strokeStyle = "rgba(0,0,0,0.14)";
   x.stroke();
 
   // Two ring tabs
   x.fillStyle = "#3C4043";
-  for (const sd of [-1, 1]) rrect(x, sd * w * 0.24 - 0.025, -h / 2 - 0.045, 0.05, 0.1, 0.025), x.fill();
+  for (const sd of [-1, 1]) {
+    rrect(x, sd * 0.24 - 0.04, -0.5 - 0.07, 0.08, 0.15, 0.04);
+    x.fill();
+  }
 
   if (!simple) {
     x.lineCap = "round";
     x.strokeStyle = "#BDC1C6";
-    x.lineWidth = 0.034;
+    x.lineWidth = 0.07;
     x.beginPath();
-    x.moveTo(-w * 0.3, h * 0.08); x.lineTo(w * 0.3, h * 0.08);
-    x.moveTo(-w * 0.3, h * 0.26); x.lineTo(w * 0.1, h * 0.26);
+    x.moveTo(-0.28, 0.1); x.lineTo(0.28, 0.1);
+    x.moveTo(-0.28, 0.3); x.lineTo(0.08, 0.3);
     x.stroke();
   }
   x.restore();
