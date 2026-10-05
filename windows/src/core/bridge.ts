@@ -67,6 +67,9 @@ export const Bridge = {
   /** Last thing Claude said in a session transcript (path must be under ~/.claude/projects). */
   lastAssistantText: (path: string) => call<string | null>("last_assistant_text", { path }),
 
+  /** Session title from its transcript (the desktop sidebar name or a /rename). */
+  sessionTitle: (path: string) => call<string | null>("session_title", { path }),
+
   quit: () => call<void>("quit_app"),
 
   openSettingsWindow: () => call<void>("open_settings_window"),

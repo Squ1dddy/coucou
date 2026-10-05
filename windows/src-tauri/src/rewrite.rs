@@ -123,6 +123,22 @@ pub fn last_assistant_text_in(jsonl: &str) -> Option<String> {
     None
 }
 
+/// Session title from a transcript: the last `custom-title` entry (the name the
+/// desktop app shows in its sidebar, or a `/rename`), capped at 80 chars.
+pub fn session_title_in(jsonl: &str) -> Option<String> {
+    jsonl.lines().rev().find_map(|line| {
+        if !line.contains("\"custom-title\"") {
+            return None;
+        }
+        let v = serde_json::from_str::<Value>(line.trim()).ok()?;
+        if v.get("type").and_then(Value::as_str) != Some("custom-title") {
+            return None;
+        }
+        let t = v.get("customTitle").and_then(Value::as_str)?.trim();
+        (!t.is_empty()).then(|| t.chars().take(80).collect())
+    })
+}
+
 /// Only `<base>/**/*.jsonl` that exists, after resolving `..` and links.
 pub fn path_allowed(path: &Path, base: &Path) -> bool {
     if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
@@ -271,6 +287,27 @@ pub fn last_assistant_text(path: String) -> Option<String> {
     last_assistant_text_in(&read_tail(path)?)
 }
 
+/// Largest transcript read whole when the tail holds no title.
+const TITLE_FULL_MAX: u64 = 16 * 1024 * 1024;
+
+/// The session's title (see `session_title_in`). Checks the tail first; titles
+/// are rewritten often so it is nearly always there.
+#[tauri::command]
+pub fn session_title(path: String) -> Option<String> {
+    let base = platform::home_dir().join(".claude").join("projects");
+    let path = Path::new(&path);
+    if !path_allowed(path, &base) {
+        return None;
+    }
+    if let Some(t) = session_title_in(&read_tail(path)?) {
+        return Some(t);
+    }
+    if std::fs::metadata(path).ok()?.len() > TITLE_FULL_MAX {
+        return None;
+    }
+    session_title_in(&std::fs::read_to_string(path).ok()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +418,35 @@ mod tests {
         });
         println!("rewrite -> {line:?}");
         assert!(line.is_some());
+    }
+
+    #[test]
+    fn title_is_the_last_custom_title() {
+        let jsonl = concat!(
+            "{\"type\":\"custom-title\",\"customTitle\":\"Old name\",\"sessionId\":\"x\"}
+",
+            "{\"type\":\"user\",\"message\":{\"content\":\"the \\\"custom-title\\\" word\"}}
+",
+            "{\"type\":\"custom-title\",\"customTitle\":\"  start T3 \",\"sessionId\":\"x\"}
+",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[]}}
+",
+        );
+        assert_eq!(session_title_in(jsonl).as_deref(), Some("start T3"));
+    }
+
+    #[test]
+    fn title_missing_or_blank_is_none() {
+        assert_eq!(session_title_in("{\"type\":\"user\"}
+"), None);
+        assert_eq!(session_title_in("{\"type\":\"custom-title\",\"customTitle\":\"  \"}
+"), None);
+        assert_eq!(session_title_in("not json \"custom-title\"
+"), None);
+    }
+
+    #[test]
+    fn title_rejects_paths_outside_projects() {
+        assert_eq!(session_title("C:/Windows/win.ini".into()), None);
     }
 }

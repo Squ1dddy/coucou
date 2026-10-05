@@ -462,6 +462,7 @@ pub fn run() {
             rewrite::rewrite_activity,
             rewrite::ollama_warm,
             rewrite::last_assistant_text,
+            rewrite::session_title,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

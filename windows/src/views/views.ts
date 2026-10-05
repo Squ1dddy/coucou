@@ -4,7 +4,7 @@
 
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
-import { State, type AgentTask } from "../core/state";
+import { State, sessionLabel, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { WheelStepper } from "../core/carousel";
 import { viewedSubagent } from "./claude";
@@ -77,7 +77,7 @@ function btn(
 function agentWho(task: AgentTask | null, label: string): HTMLElement {
   const row = h("div", { class: "who-row" });
   if (task) {
-    row.append(dot(task.color, 8), h("span", { class: "n", text: task.project ? `${task.name} · ${task.project}` : task.name }));
+    row.append(dot(task.color, 8), h("span", { class: "n", text: [sessionLabel(task) ?? task.name, task.project].filter(Boolean).join(" · ") }));
   }
   row.append(h("span", { text: label }));
   return row;
@@ -266,14 +266,18 @@ function buildOverview(actions: ViewActions): ViewHost {
       }
 
       clear(nameEl);
+      nameEl.removeAttribute("title");
       const viewing = task ? viewedSubagent(task)?.sub : null;
       if (viewing) {
         // Drilled in: the Mochi on the stage is the subagent, named for its job.
         nameEl.append(h("span", { class: "stage-name-main", text: viewing.description }));
         nameEl.append(h("span", { class: "stage-name-sub", text: viewing.type }));
       } else if (task) {
-        nameEl.append(h("span", { class: "stage-name-main", text: task.name }));
+        // A Claude session goes by its title (or first prompt); "Claude Code" moves to the tooltip.
+        const label = task.source === "claudeCode" ? sessionLabel(task) : null;
+        nameEl.append(h("span", { class: "stage-name-main", text: label ?? task.name }));
         if (task.project) nameEl.append(h("span", { class: "stage-name-sub", text: task.project }));
+        if (label) nameEl.title = `${task.name} · ${label}`;
       }
 
       // Every pill shows its own card, exactly like IntegrationCardView; Claude
@@ -310,7 +314,7 @@ function buildOverview(actions: ViewActions): ViewHost {
 
       // Dot strip: one dot per agent, the current one longer; a finished / waiting /
       // failed agent glows in its badge colour.
-      const key = State.tasks.map((t) => `${t.id}:${t.pillBadge ?? ""}:${t.project ?? ""}`).join("|") + `@${task?.id}`;
+      const key = State.tasks.map((t) => `${t.id}:${t.pillBadge ?? ""}:${t.project ?? ""}:${sessionLabel(t) ?? ""}`).join("|") + `@${task?.id}`;
       if (key !== dotKey) {
         dotKey = key;
         clear(dots);
@@ -325,7 +329,7 @@ function buildOverview(actions: ViewActions): ViewHost {
             "button",
             {
               class: t.id === task?.id ? "stage-dot on" : "stage-dot",
-              title: t.project ? `${t.name} · ${t.project}` : t.name,
+              title: [sessionLabel(t) ?? t.name, t.project].filter(Boolean).join(" · "),
               onclick: () => actions.setFocus(t.id),
             },
             d,

@@ -7,7 +7,7 @@ import { describeActivity } from "../core/activity";
 import { Bridge, onEvent } from "../core/bridge";
 import { Friendly } from "../core/friendly";
 import { Sound } from "../core/sound";
-import { State, modelLabel, staleClaudeSessions, type ClaudeUsage } from "../core/state";
+import { State, modelLabel, staleClaudeSessions, type AgentTask, type ClaudeUsage } from "../core/state";
 import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
@@ -95,6 +95,25 @@ function approvalTarget(tool: string, input: Record<string, unknown>): string {
     }
   }
   return tool;
+}
+
+const TITLE_EVERY_MS = 15_000;
+
+/** Keeps the session's stage label current: its title (re-read at most every 15s), else its first prompt. */
+function refreshLabel(t: AgentTask, sessionId: string, transcript: string | undefined, prompt: string | undefined) {
+  if (!sessionId) return;
+  if (t.label?.session !== sessionId) t.label = { session: sessionId, title: null, firstPrompt: null, checkedAt: 0 };
+  const label = t.label;
+  const asked = prompt?.trim().replace(/\s+/g, " ");
+  if (asked && !label.firstPrompt) label.firstPrompt = asked.slice(0, 60);
+  if (!transcript || Date.now() - label.checkedAt < TITLE_EVERY_MS) return;
+  label.checkedAt = Date.now();
+  void Bridge.sessionTitle(transcript).then((title) => {
+    if (title && t.label === label && title !== label.title) {
+      label.title = title;
+      State.notify();
+    }
+  });
 }
 
 function upsert(taskId: string, projectName: string, cwd: string) {
@@ -209,7 +228,10 @@ function handleHook(island: Island, payload: HookPayload) {
     : (State.bindClaudeSession(sessionId)?.id ?? CLAUDE_ID);
   if (!isExternalAgent) {
     const t = State.tasks.find((x) => x.id === agentId);
-    if (t) t.lastEventAt = Date.now();
+    if (t) {
+      t.lastEventAt = Date.now();
+      refreshLabel(t, sessionId, payload.transcript_path, name === "UserPromptSubmit" ? payload.prompt : undefined);
+    }
   }
 
   const focused = State.focusId === agentId;

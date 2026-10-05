@@ -22,6 +22,11 @@ export interface AgentTask {
   sessionCwd?: string | null;
   /** Claude Code session this entry is bound to (Claude tasks only). */
   sessionId?: string | null;
+  /**
+   * What names this session on the stage: its title, else the first prompt.
+   * Only valid while `session` equals `sessionId` (main gets rebound).
+   */
+  label?: { session: string; title: string | null; firstPrompt: string | null; checkedAt: number } | null;
   /** Folder name of the session's cwd, shown under "Claude Code". */
   project?: string | null;
   /** When this session started (ms), so the oldest extra can be promoted. */
@@ -79,6 +84,12 @@ const PENDING_TTL_MS = 5 * 60 * 1000;
 export const SUBAGENT_TTL_MS = 30 * 60 * 1000;
 
 /** "inherit" and the general-purpose agent run on the parent's model. */
+/** Stage name for a Claude session: title, else first prompt, else null (use the task name). */
+export function sessionLabel(t: AgentTask): string | null {
+  if (!t.label || t.label.session !== t.sessionId) return null;
+  return t.label.title ?? t.label.firstPrompt;
+}
+
 export function modelLabel(raw: string | null | undefined, type: string): string | null {
   const m = (raw ?? "").trim();
   if (m === "inherit") return "Same as Claude";
@@ -511,6 +522,7 @@ class AppState {
       main.stepIndex = next.stepIndex;
       main.sessionCwd = next.sessionCwd;
       main.project = next.project;
+      main.label = next.label;
       main.sessionId = next.sessionId;
       main.startedAt = next.startedAt;
       main.promptAt = next.promptAt;
@@ -532,6 +544,7 @@ class AppState {
       main.sessionId = null;
       main.sessionCwd = null;
       main.project = null;
+      main.label = null;
       main.startedAt = null;
       main.promptAt = null;
       main.updatedAt = null;
