@@ -12,6 +12,7 @@ mod platform;
 mod secrets;
 mod settings;
 mod tray;
+mod usage;
 
 #[cfg(not(windows))]
 use std::process::Command;
@@ -474,6 +475,7 @@ pub fn run() {
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             integrations::start(handle.clone());
+            usage::refresh(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())

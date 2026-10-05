@@ -197,6 +197,11 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
 
     if event != "PermissionRequest" {
         log::line(format!("hook {event}"));
+        // End of a prompt: the plan limits just moved. Only Claude Code's own
+        // Stop counts, not events tagged for another agent.
+        if event == "Stop" && payload.get("coucou_agent").is_none() {
+            crate::usage::refresh(&app);
+        }
         let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
         pipe.finish();
         return;

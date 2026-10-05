@@ -145,7 +145,7 @@ export class Island {
           integration_notion: "https://notion.so",
           integration_calcom: "https://app.cal.com/bookings",
         };
-        if (task.id === "integration_claude") void Bridge.openSession(task.sessionCwd ?? null);
+        if (task.source === "claudeCode") void Bridge.openSession(task.sessionCwd ?? null);
         else if (task.id === "integration_n8n") void Bridge.openN8n();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
       },
@@ -161,8 +161,10 @@ export class Island {
         State.pendingApproval = null;
         State.isPinned = false;
         this.fsm.pinned = false;
-        State.updateTask("integration_claude", "working");
-        State.setPillBadge("integration_claude", null);
+        // The approval belongs to the entry bound to its session (main or extra).
+        const owner = State.claudeTaskFor(req.sessionId)?.id ?? "integration_claude";
+        State.updateTask(owner, "working");
+        State.setPillBadge(owner, null);
         this.setView(State.defaultView());
       },
       toggleSound: () => {

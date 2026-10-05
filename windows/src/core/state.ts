@@ -20,8 +20,53 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** Claude Code session this entry is bound to (Claude tasks only). */
+  sessionId?: string | null;
+  /** Folder name of the session's cwd, shown under "Claude Code". */
+  project?: string | null;
+  /** When this session started (ms), so the oldest extra can be promoted. */
+  startedAt?: number | null;
+  /** Last UserPromptSubmit (ms). */
+  promptAt?: number | null;
+  /** Last step appended (ms). */
+  updatedAt?: number | null;
+  /** Last hook event of any kind for this session (ms), for expiring dead sessions. */
+  lastEventAt?: number | null;
   /** Brand prop Mochi wears (headphones, calendar page). */
   accessory?: AccessoryKind | null;
+}
+
+/** One plan limit, as Rust reports it (`claude-usage` event). */
+export interface ClaudeLimit {
+  /** 0-100. */
+  pct: number;
+  resets_at_ms: number | null;
+}
+
+export interface ClaudeUsage {
+  five_hour: ClaudeLimit | null;
+  seven_day: ClaudeLimit | null;
+  updated_ms: number;
+  source: "claude" | "hud";
+}
+
+/** A Claude session with no hook event for this long, and not mid-turn, is gone. */
+export const CLAUDE_SESSION_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Session ids of Claude tasks that count as ended: idle, finished or error with
+ * no hook event for `ttlMs`. Working, thinking, approval, question and ratelimit
+ * tasks never expire.
+ */
+export function staleClaudeSessions(
+  tasks: readonly AgentTask[], now: number, ttlMs = CLAUDE_SESSION_TTL_MS,
+): string[] {
+  return tasks
+    .filter((t) =>
+      t.source === "claudeCode" && !!t.sessionId && t.lastEventAt != null &&
+      (t.state === "idle" || t.state === "finished" || t.state === "error") &&
+      now - t.lastEventAt >= ttlMs)
+    .map((t) => t.sessionId!);
 }
 
 export interface ApprovalInfo {
@@ -155,6 +200,9 @@ class AppState {
 
   integrations: Record<string, IntegrationInfo> = {};
 
+  /** Latest plan limits, or null until one source answered. */
+  claudeUsage: ClaudeUsage | null = null;
+
   lastActivity = performance.now();
 
   settings: Settings = { ...DEFAULT_SETTINGS };
@@ -207,6 +255,7 @@ class AppState {
     t.steps.push(step);
     if (t.steps.length > 20) t.steps.shift();
     t.stepIndex = t.steps.length - 1;
+    t.updatedAt = Date.now();
     this.notify();
   }
 
@@ -226,21 +275,18 @@ class AppState {
       if (shouldLoad && idx < 0) this.tasks.push({ ...proto, steps: [] });
       if (!shouldLoad && idx >= 0) this.tasks.splice(idx, 1);
     }
-    // Order: integration_claude first, then agent_* pills (visible in slice(0,4)),
-    // then other integrations in declaration order.
+    // Order: integration_claude, its extra sessions (claude_*), agent_* pills
+    // (visible in slice(0,4)), then other integrations in declaration order.
+    // The sort is stable, so extras and agents keep their insertion order.
     const order = INTEGRATION_AGENTS.map((t) => t.id);
+    const rank = (id: string) =>
+      id === "integration_claude" ? 0 : id.startsWith("claude_") ? 1 : id.startsWith("agent_") ? 2 : 3;
     this.tasks.sort((a, b) => {
-      const isAgentA = a.id.startsWith("agent_");
-      const isAgentB = b.id.startsWith("agent_");
-      // integration_claude always first
-      if (a.id === "integration_claude") return -1;
-      if (b.id === "integration_claude") return 1;
-      // agent_* before other integrations; preserve insertion order among themselves
-      if (isAgentA && !isAgentB) return -1;
-      if (isAgentB && !isAgentA) return 1;
-      if (isAgentA && isAgentB) return 0;
-      // both known integrations → declaration order
-      return order.indexOf(a.id) - order.indexOf(b.id);
+      const ra = rank(a.id);
+      const rb = rank(b.id);
+      if (ra !== rb) return ra - rb;
+      if (ra === 3) return order.indexOf(a.id) - order.indexOf(b.id);
+      return 0;
     });
     if (!this.focusId) this.focusId = "integration_claude";
     this.notify();
@@ -258,13 +304,103 @@ class AppState {
    *  Inserted right after integration_claude so it appears in the visible slice(0,4). */
   upsertExternalAgent(id: string, name: string, color: string) {
     if (this.tasks.some((t) => t.id === id)) return;
-    const at = this.tasks.findIndex((t) => t.id === "integration_claude") + 1;
+    // After integration_claude and any extra Claude sessions.
+    let at = this.tasks.findIndex((t) => t.id === "integration_claude") + 1;
+    while (this.tasks[at]?.id.startsWith("claude_")) at++;
     this.tasks.splice(at, 0, {
       id, name, color,
       state: "idle", stepIndex: 0, steps: [],
       source: "agent", isIntegration: false,
     });
     if (!this.focusId) this.focusId = id;
+    this.notify();
+  }
+
+  /** The task a Claude Code session reports to: its own, else the main entry. */
+  claudeTaskFor(sessionId: string | null | undefined): AgentTask | null {
+    const main = this.tasks.find((t) => t.id === "integration_claude") ?? null;
+    if (!sessionId) return main;
+    return this.tasks.find((t) => t.sessionId === sessionId) ?? main;
+  }
+
+  /**
+   * One carousel entry per live Claude Code session. The first session binds to
+   * integration_claude (that id never changes); each further concurrent session
+   * gets `claude_<session_id>`, kept in creation order right after the main one.
+   */
+  bindClaudeSession(sessionId: string): AgentTask | null {
+    const main = this.tasks.find((t) => t.id === "integration_claude");
+    if (!main) return null;
+    if (!sessionId) return main;
+    const known = this.tasks.find((t) => t.sessionId === sessionId);
+    if (known) return known;
+    const now = Date.now();
+    if (!main.sessionId) {
+      main.sessionId = sessionId;
+      main.startedAt = now;
+      main.lastEventAt = now;
+      return main;
+    }
+    const extra: AgentTask = {
+      id: `claude_${sessionId}`, name: "Claude Code", color: main.color,
+      state: "idle", stepIndex: 0, steps: [],
+      source: "claudeCode", isIntegration: false,
+      sessionId, startedAt: now, lastEventAt: now,
+    };
+    let at = this.tasks.indexOf(main) + 1;
+    while (this.tasks[at]?.id.startsWith("claude_")) at++;
+    this.tasks.splice(at, 0, extra);
+    this.notify();
+    return extra;
+  }
+
+  /**
+   * A Claude Code session ended. Extras are removed; when the main session ends
+   * while extras are live, the oldest extra is promoted into integration_claude
+   * so the main entry never disappears. Otherwise the main entry just goes calm.
+   */
+  endClaudeSession(sessionId: string) {
+    const task = sessionId
+      ? this.tasks.find((t) => t.sessionId === sessionId)
+      : this.tasks.find((t) => t.id === "integration_claude");
+    if (!task) return;
+    const main = this.tasks.find((t) => t.id === "integration_claude")!;
+    if (task !== main) {
+      this.removeTask(task.id);
+      return;
+    }
+    const extras = this.tasks
+      .filter((t) => t.id.startsWith("claude_"))
+      .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
+    const next = extras[0];
+    if (next) {
+      main.state = next.state;
+      main.steps = next.steps;
+      main.stepIndex = next.stepIndex;
+      main.sessionCwd = next.sessionCwd;
+      main.project = next.project;
+      main.sessionId = next.sessionId;
+      main.startedAt = next.startedAt;
+      main.promptAt = next.promptAt;
+      main.updatedAt = next.updatedAt;
+      main.lastEventAt = next.lastEventAt;
+      main.pillBadge = next.pillBadge;
+      const hadFocus = this.focusId === next.id;
+      this.removeTask(next.id);
+      if (hadFocus) this.focusId = main.id;
+    } else {
+      main.state = "idle";
+      main.steps = [];
+      main.stepIndex = 0;
+      main.pillBadge = null;
+      main.sessionId = null;
+      main.sessionCwd = null;
+      main.project = null;
+      main.startedAt = null;
+      main.promptAt = null;
+      main.updatedAt = null;
+      main.lastEventAt = null;
+    }
     this.notify();
   }
 

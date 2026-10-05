@@ -6,7 +6,7 @@
 import { describeActivity } from "../core/activity";
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { State, staleClaudeSessions, type ClaudeUsage } from "../core/state";
 import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
@@ -89,24 +89,49 @@ function approvalTarget(tool: string, input: Record<string, unknown>): string {
   return tool;
 }
 
-function upsert(projectName: string, cwd: string) {
-  const t = State.tasks.find((x) => x.id === CLAUDE_ID);
+function upsert(taskId: string, projectName: string, cwd: string) {
+  const t = State.tasks.find((x) => x.id === taskId);
   if (!t) return;
-  t.name = projectName;
-  if (cwd) t.sessionCwd = cwd;
+  if (cwd) {
+    t.sessionCwd = cwd;
+    t.project = projectName;
+  }
 }
 
-function clearSession() {
-  const t = State.tasks.find((x) => x.id === CLAUDE_ID);
-  if (!t) return;
-  t.steps = [];
-  t.stepIndex = 0;
-  t.name = "Claude Code";
-  t.pillBadge = null;
+/**
+ * Sessions that already sent SessionEnd. A late event from one (a SubagentStop
+ * after the end) must not bring its entry back or rebind the main one; a new
+ * SessionStart / UserPromptSubmit (a resumed session) lifts the mark.
+ */
+const endedSessions = new Set<string>();
+
+function markEnded(sessionId: string) {
+  endedSessions.add(sessionId);
+  if (endedSessions.size > 50) endedSessions.delete(endedSessions.values().next().value as string);
+}
+
+/** Ends sessions that went silent without a SessionEnd (closed terminal, crash). */
+function expireStaleSessions(except = "") {
+  // The session that just spoke is alive again, whatever its age.
+  const stale = staleClaudeSessions(State.tasks, Date.now()).filter((sid) => sid !== except);
+  // Not added to the ended set: only a real SessionEnd does that, so a session
+  // that speaks again later simply binds like a new one.
+  for (const sid of stale) State.endClaudeSession(sid);
+  return stale.length > 0;
 }
 
 export function registerHookHandlers(island: Island) {
+  window.setInterval(() => {
+    // Nothing to expire or redraw while the island is hidden; the next event re-checks.
+    if (State.mode !== "hidden") expireStaleSessions();
+  }, 60_000);
+
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+  // Plan limits from Rust (Claude's get_usage, or the claude-hud file).
+  void onEvent<ClaudeUsage>("claude-usage", (usage) => {
+    State.claudeUsage = usage;
+    State.notify();
+  });
 }
 
 function handleHook(island: Island, payload: HookPayload) {
@@ -126,8 +151,34 @@ function handleHook(island: Island, payload: HookPayload) {
   // Route to the right pill. Valid coucou_agent → dynamic "agent_<name>" pill.
   // "claude" is reserved; absent or invalid → Claude Code pill unchanged.
   const validAgent = validateAgent(payload.coucou_agent);
-  const agentId = validAgent ? `agent_${validAgent}` : CLAUDE_ID;
   const isExternalAgent = validAgent !== null;
+  const sessionId = payload.session_id ?? "";
+
+  // Claude Code events go to the entry bound to their session: the main one for
+  // the first live session, `claude_<session_id>` for each further one.
+  if (!isExternalAgent) {
+    if (name === "SessionEnd") {
+      if (sessionId) markEnded(sessionId);
+      State.endClaudeSession(sessionId);
+      State.notify();
+      return;
+    }
+    if (name === "SessionStart" || name === "UserPromptSubmit") {
+      endedSessions.delete(sessionId);
+    } else if (sessionId && endedSessions.has(sessionId)) {
+      if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
+      return;
+    }
+  }
+  // A new session may only take main once the old, silent one has been expired.
+  if (!isExternalAgent && sessionId) expireStaleSessions(sessionId);
+  const agentId = validAgent
+    ? `agent_${validAgent}`
+    : (State.bindClaudeSession(sessionId)?.id ?? CLAUDE_ID);
+  if (!isExternalAgent) {
+    const t = State.tasks.find((x) => x.id === agentId);
+    if (t) t.lastEventAt = Date.now();
+  }
 
   const focused = State.focusId === agentId;
 
@@ -147,7 +198,7 @@ function handleHook(island: Island, payload: HookPayload) {
     if (isExternalAgent) {
       State.upsertExternalAgent(agentId, validAgent!, agentColor(validAgent!));
     } else {
-      upsert(projectName, cwd);
+      upsert(agentId, projectName, cwd);
     }
   };
 
@@ -161,6 +212,10 @@ function handleHook(island: Island, payload: HookPayload) {
     case "UserPromptSubmit": {
       ensurePill();
       State.updateTask(agentId, "thinking");
+      {
+        const t = State.tasks.find((x) => x.id === agentId);
+        if (t && !isExternalAgent) t.promptAt = Date.now();
+      }
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
       if (asked) State.appendStep(agentId, asked.slice(0, 60));
@@ -223,12 +278,8 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SessionEnd":
-      if (isExternalAgent) {
-        State.removeTask(agentId);
-      } else {
-        State.updateTask(agentId, "idle");
-        clearSession();
-      }
+      // Claude Code's own SessionEnd is handled above; only external agents land here.
+      State.removeTask(agentId);
       break;
 
     case "SubagentStart":
@@ -253,14 +304,14 @@ function handleHook(island: Island, payload: HookPayload) {
       // back so Claude Code shows its own picker, and just say questions are waiting.
       if (payload.tool_name === "AskUserQuestion") {
         if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
-        upsert(projectName, cwd);
+        upsert(agentId, projectName, cwd);
         const questions = (payload.tool_input as { questions?: unknown[] } | undefined)?.questions;
         const count = Array.isArray(questions) ? questions.length : 1;
-        State.updateTask(CLAUDE_ID, "question");
-        State.appendStep(CLAUDE_ID, count > 1 ? `Claude has ${count} questions for you` : "Claude has a question for you");
+        State.updateTask(agentId, "question");
+        State.appendStep(agentId, count > 1 ? `Claude has ${count} questions for you` : "Claude has a question for you");
         Sound.play("question");
         // No pills to click any more: the question takes the carousel over.
-        State.setFocus(CLAUDE_ID);
+        State.setFocus(agentId);
         island.alert("question");
         break;
       }
@@ -273,25 +324,25 @@ function handleHook(island: Island, payload: HookPayload) {
         if (requestId) void Bridge.approvalDecline(requestId);
         break;
       }
-      upsert(projectName, cwd);
+      upsert(agentId, projectName, cwd);
       if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
       const tool = payload.tool_name ?? "Tool";
       const input = payload.tool_input ?? {};
       State.pendingApproval = {
         requestId,
-        sessionId: payload.session_id ?? "",
+        sessionId,
         tool,
         command: approvalTarget(tool, input),
       };
       // The relay's short ack window closes in 800 ms; everything below this
       // line is synchronous, so the card really is up by the time it lands.
       if (requestId) void Bridge.approvalAck(requestId);
-      State.updateTask(CLAUDE_ID, "approval");
+      State.updateTask(agentId, "approval");
       State.isPinned = true;
       Sound.play("approval");
       // No pills to click any more: the card takes the carousel over, and Claude
       // stays focused once the view returns to the overview.
-      State.setFocus(CLAUDE_ID);
+      State.setFocus(agentId);
       island.alert("approval");
       // Coucou answers within 108 s or not at all; after that the terminal has
       // taken over and the card would be lying.
@@ -301,8 +352,9 @@ function handleHook(island: Island, payload: HookPayload) {
         State.pendingApproval = null;
         State.isPinned = false;
         island.dropPin();
-        State.updateTask(CLAUDE_ID, "working");
-        State.setPillBadge(CLAUDE_ID, null);
+        const owner = State.claudeTaskFor(sessionId)?.id ?? CLAUDE_ID;
+        State.updateTask(owner, "working");
+        State.setPillBadge(owner, null);
         if (State.view === "approval") island.setView(State.defaultView());
         State.notify();
       }, 110_000);

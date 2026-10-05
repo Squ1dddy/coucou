@@ -4,7 +4,6 @@
 
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
-import { Ticker } from "./ticker";
 import { State, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { WheelStepper } from "../core/carousel";
@@ -73,7 +72,7 @@ function btn(
 function agentWho(task: AgentTask | null, label: string): HTMLElement {
   const row = h("div", { class: "who-row" });
   if (task) {
-    row.append(dot(task.color, 8), h("span", { class: "n", text: task.name }));
+    row.append(dot(task.color, 8), h("span", { class: "n", text: task.project ? `${task.name} · ${task.project}` : task.name }));
   }
   row.append(h("span", { text: label }));
   return row;
@@ -162,9 +161,6 @@ function crossSlide(host: HTMLElement, body: HTMLElement, ghost: HTMLElement | n
 }
 
 function buildOverview(actions: ViewActions): ViewHost {
-  const ticker = new Ticker();
-  const who = h("div", { class: "who" });
-  const tickerBody = h("div", { class: "card-body" }, who, ticker.el);
   const detailBody = h("div", { class: "detail-body" });
   const jump = h(
     "button",
@@ -191,12 +187,19 @@ function buildOverview(actions: ViewActions): ViewHost {
     { passive: false },
   );
 
+  // "N min" text and the limit bars age on their own: one slow repaint while a
+  // Claude panel is on screen (nothing at all while the island is hidden).
+  window.setInterval(() => {
+    if (State.mode !== "hidden" && State.view === "overview" && State.focusTask?.source === "claudeCode") {
+      State.notify();
+    }
+  }, 30_000);
+
   const el = h("div", { class: "view overview" }, stage, h("div", { class: "right" }, detail));
 
   let dotKey = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
-  let mode: "ticker" | "card" | null = null;
   let cardKey = "";
   /** False while the view is off screen, so a focus change then does not animate. */
   let shown = false;
@@ -220,9 +223,6 @@ function buildOverview(actions: ViewActions): ViewHost {
 
   return {
     el,
-    tick(nowMs: number) {
-      if (mode === "ticker") ticker.tick(nowMs);
-    },
     leave() {
       shown = false;
     },
@@ -239,42 +239,26 @@ function buildOverview(actions: ViewActions): ViewHost {
         lastFocus = task?.id ?? null;
         detailOpen = false;
         cardKey = "";
-        mode = null;
       }
 
-      nameEl.textContent = task ? (task.id === "integration_claude" ? "Claude Code" : task.name) : "";
+      clear(nameEl);
+      if (task) {
+        nameEl.append(h("span", { class: "stage-name-main", text: task.name }));
+        if (task.project) nameEl.append(h("span", { class: "stage-name-sub", text: task.project }));
+      }
 
-      // The Claude Code pill with a live Claude Code session keeps the ticker; every other
-      // pill shows its own card, exactly like IntegrationCardView.
-      const sessionActive =
-        task?.id === "integration_claude" && (task.state !== "idle" || task.steps.length > 0);
-
-      if (task && sessionActive) {
-        if (mode !== "ticker") {
-          clear(detailBody);
-          detailBody.append(tickerBody);
-          mode = "ticker";
-          cardKey = "";
-        }
-        clear(who);
-        who.append(
-          dot(task.color, 7),
-          h("span", { class: "name", text: task.name }),
-          h("span", { class: "tool", text: task.source === "claudeCode" ? "Claude Code" : "n8n" }),
-        );
-        if (task.steps.length > 1) {
-          who.append(h("span", {
-            class: "count",
-            text: `${Math.min(task.stepIndex + 1, task.steps.length)}/${task.steps.length}`,
-          }));
-        }
-        ticker.sync(task);
-      } else if (task) {
+      // Every pill shows its own card, exactly like IntegrationCardView; Claude
+      // Code entries (main or extra session) get the Claude panel.
+      if (task) {
         const info = State.integrations[task.id];
         const key = [
           task.id, detailOpen, task.state, task.steps.join("|"),
           info?.loaded, info?.error, info?.configured,
           JSON.stringify(info?.data ?? {}), integrationCardSalt(task.id),
+          // The Claude panel also shows limits and "N min" text that move on their own.
+          task.source === "claudeCode"
+            ? [task.promptAt, task.updatedAt, task.project, JSON.stringify(State.claudeUsage), Math.floor(Date.now() / 30_000)].join("^")
+            : "",
         ].join("~");
         // A poll must not rebuild the volume slider under the user's finger.
         const held = cardKey.startsWith(`${task.id}~`) && integrationCardHeld();
@@ -282,7 +266,6 @@ function buildOverview(actions: ViewActions): ViewHost {
           // Same agent re-rendered (a poll, a clock tick): keep the list's scroll place.
           const scroll = cardKey.startsWith(`${task.id}~`) ? detailBody.scrollTop : 0;
           cardKey = key;
-          mode = "card";
           clear(detailBody);
           detailBody.append(renderIntegrationCard(task, hooks));
           detailBody.scrollTop = scroll;
@@ -294,7 +277,7 @@ function buildOverview(actions: ViewActions): ViewHost {
 
       // Dot strip: one dot per agent, the current one longer; a finished / waiting /
       // failed agent glows in its badge colour.
-      const key = State.tasks.map((t) => `${t.id}:${t.pillBadge ?? ""}`).join("|") + `@${task?.id}`;
+      const key = State.tasks.map((t) => `${t.id}:${t.pillBadge ?? ""}:${t.project ?? ""}`).join("|") + `@${task?.id}`;
       if (key !== dotKey) {
         dotKey = key;
         clear(dots);
@@ -309,7 +292,7 @@ function buildOverview(actions: ViewActions): ViewHost {
             "button",
             {
               class: t.id === task?.id ? "stage-dot on" : "stage-dot",
-              title: t.name,
+              title: t.project ? `${t.name} · ${t.project}` : t.name,
               onclick: () => actions.setFocus(t.id),
             },
             d,
