@@ -60,7 +60,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const missing =
     task.id === "integration_claude"
       ? "Hooks not installed"
-      : task.id === "integration_spotify"
+      : task.id === "integration_spotify" || task.id === "integration_gcal"
         ? "Not connected"
         : "Key not configured";
   const label = error ?? (configured ? "Connected · loading…" : missing);
@@ -324,6 +324,44 @@ function spotifyCard(task: AgentTask): HTMLElement {
   return h("div", { class: "int-card" }, header(color, "Spotify", playing ? "Playing" : "Player"), body, buttons);
 }
 
+// ── Google Calendar ───────────────────────────────────────────────────────────
+
+function gcalCard(task: AgentTask): HTMLElement {
+  const rows = h("div", { class: "int-rows tight" });
+  const events = arr("integration_gcal", "events");
+  if (events.length === 0) {
+    rows.append(h("div", { class: "int-empty", text: "No more events today" }));
+  }
+  for (const e of events.slice(0, 3)) {
+    const link = typeof e.htmlLink === "string" ? e.htmlLink : "";
+    const when = e.allDay === true ? "All day" : localClock(e.start);
+    const location = typeof e.location === "string" ? e.location : "";
+    rows.append(
+      h(
+        "button",
+        {
+          class: "int-page",
+          title: link ? "Open in Google Calendar" : "",
+          onclick: () => {
+            if (link) void Bridge.openUrl(link);
+          },
+        },
+        h("span", { class: "int-time", text: when }),
+        h("span", { class: "int-name", text: String(e.title ?? "(No title)") }),
+        ...(location ? [h("span", { class: "int-sub", text: location })] : []),
+      ),
+    );
+  }
+  return h("div", { class: "int-card" }, header(task.color, "Google Calendar", "Today"), rows);
+}
+
+/** "14:30" in the user's time zone from an RFC 3339 date-time. */
+function localClock(value: unknown): string {
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
 // ── n8n ───────────────────────────────────────────────────────────────────────
 
 function n8nCard(task: AgentTask, onDetail: () => void, openSettings: () => void): HTMLElement {
@@ -404,6 +442,7 @@ export function hasIntegrationData(id: string): boolean {
     case "integration_calcom":
       return info.loaded;
     case "integration_spotify":
+    case "integration_gcal":
       return info.loaded;
     default:
       return false;
@@ -431,6 +470,8 @@ export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHoo
       return calcomCard();
     case "integration_spotify":
       return spotifyCard(task);
+    case "integration_gcal":
+      return gcalCard(task);
     default:
       return idleCard(task, hooks.openSettings);
   }

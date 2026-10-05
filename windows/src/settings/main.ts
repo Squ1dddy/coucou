@@ -263,7 +263,7 @@ interface IntegrationDef {
   /** Credential Manager keys, in the order they are shown. */
   fields: { key: string; label: string; placeholder: string; secret: boolean }[];
   /** Signs in with OAuth: adds a Connect / Disconnect button under the fields. */
-  oauth?: "spotify";
+  oauth?: "spotify" | "google";
 }
 
 const INTEGRATIONS: IntegrationDef[] = [
@@ -282,6 +282,11 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "calcom-api-key", label: "API key", placeholder: "cal_…", secret: true }] },
   { id: "integration_spotify", name: "Spotify", color: "#1DB954", oauth: "spotify",
     fields: [{ key: "spotify-client-id", label: "Client ID", placeholder: "From your Spotify app", secret: false }] },
+  { id: "integration_gcal", name: "Google Calendar", color: "#4285F4", oauth: "google",
+    fields: [
+      { key: "gcal-client-id", label: "Client ID", placeholder: "From your Google desktop client", secret: false },
+      { key: "gcal-client-secret", label: "Client secret", placeholder: "GOCSPX-…", secret: true },
+    ] },
 ];
 
 const MAX_ACTIVE = 4;
@@ -477,6 +482,7 @@ async function main() {
   const keys = [
     "stripe-api-key", "vercel-token",
     "n8n-url", "n8n-api-key", "notion-api-key", "calcom-api-key", "spotify-client-id",
+    "gcal-client-id", "gcal-client-secret",
   ];
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;

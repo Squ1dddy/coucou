@@ -61,9 +61,25 @@ pub const SPOTIFY: Provider = Provider {
     expiry_key: "spotify-token-expiry",
 };
 
+/// Google desktop clients need their client secret in the token exchange, and
+/// `access_type=offline` + `prompt=consent` make Google always issue a refresh token.
+pub const GOOGLE: Provider = Provider {
+    id: "google",
+    auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
+    token_url: "https://oauth2.googleapis.com/token",
+    scopes: "https://www.googleapis.com/auth/calendar.readonly",
+    client_id_key: "gcal-client-id",
+    client_secret_key: Some("gcal-client-secret"),
+    extra_auth_params: &[("access_type", "offline"), ("prompt", "consent")],
+    access_key: "gcal-access-token",
+    refresh_key: "gcal-refresh-token",
+    expiry_key: "gcal-token-expiry",
+};
+
 pub fn provider(id: &str) -> Option<&'static Provider> {
     match id {
         "spotify" => Some(&SPOTIFY),
+        "google" => Some(&GOOGLE),
         _ => None,
     }
 }
@@ -482,6 +498,25 @@ mod tests {
         assert!(url.contains("state=st%26te"));
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("code_challenge=chal"));
+    }
+
+    #[test]
+    fn google_provider_is_registered_and_asks_for_offline_access() {
+        assert!(provider("google").is_some());
+        let url = build_auth_url(&GOOGLE, "id", "http://127.0.0.1:1/callback", "s", "c");
+        assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?"));
+        assert!(url.contains("access_type=offline"));
+        assert!(url.contains("prompt=consent"));
+        assert!(url.contains("calendar.readonly"));
+        for key in [
+            GOOGLE.client_id_key,
+            GOOGLE.client_secret_key.unwrap(),
+            GOOGLE.access_key,
+            GOOGLE.refresh_key,
+            GOOGLE.expiry_key,
+        ] {
+            assert!(secrets::KNOWN_KEYS.contains(&key), "{key} missing from KNOWN_KEYS");
+        }
     }
 
     #[test]

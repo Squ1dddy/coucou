@@ -19,6 +19,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::island::WINDOW_LABEL;
 use crate::log;
 use crate::oauth;
+use crate::platform;
 use crate::secrets;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -68,6 +69,7 @@ pub fn start(app: AppHandle) {
     spawn(app.clone(), "integration_stripe", 6, 30, poll_stripe);
     spawn(app.clone(), "integration_calcom", 8, 300, poll_calcom);
     spawn(app.clone(), "integration_notion", 9, 300, poll_notion);
+    spawn(app.clone(), "integration_gcal", 10, 300, poll_gcal);
     spawn_spotify(app);
 }
 
@@ -145,6 +147,7 @@ pub async fn poll_once(app: AppHandle, id: &str) {
         "integration_notion" => poll_notion(app).await,
         "integration_calcom" => poll_calcom(app).await,
         "integration_spotify" if spotify_allowed(&app) => poll_spotify(app).await,
+        "integration_gcal" if gcal_allowed(&app) => poll_gcal(app).await,
         _ => {}
     }
 }
@@ -791,9 +794,237 @@ pub async fn spotify_control(app: AppHandle, action: &str) -> Result<(), String>
     Ok(())
 }
 
+// ── Google Calendar ───────────────────────────────────────────────────────────
+
+const GCAL_EVENTS: &str = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
+
+/// Not paused, switched on in settings, and signed in.
+fn gcal_allowed(app: &AppHandle) -> bool {
+    !PAUSED.load(Ordering::Relaxed)
+        && enabled(app, "integration_gcal")
+        && oauth::connected(&oauth::GOOGLE)
+}
+
+fn gcal_update(app: &AppHandle, data: Value, error: Option<String>) {
+    // Never an `event` from Rust: the 10-minute heads-up is a timer in the island.
+    emit(app, IntegrationUpdate { id: "integration_gcal", data, error, event: None });
+}
+
+/// Days since 1970-01-01 for a proleptic Gregorian date (Hinnant's algorithm).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// Inverse of `days_from_civil`.
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+/// `2026-10-05T03:04:05Z` from Unix seconds.
+fn rfc3339_utc(secs: i64) -> String {
+    let (y, m, d) = civil_from_days(secs.div_euclid(86400));
+    let t = secs.rem_euclid(86400);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", t / 3600, t % 3600 / 60, t % 60)
+}
+
+/// `+11:00` / `-03:30` from an offset in seconds east of UTC.
+fn fmt_offset(offset_secs: i64) -> String {
+    let sign = if offset_secs < 0 { '-' } else { '+' };
+    let minutes = offset_secs.abs() / 60;
+    format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
+}
+
+/// The last second of the local day, with its UTC offset, as Google wants `timeMax`.
+fn end_of_day_rfc3339(year: i64, month: i64, day: i64, offset_secs: i64) -> String {
+    format!("{year:04}-{month:02}-{day:02}T23:59:59{}", fmt_offset(offset_secs))
+}
+
+/// The local UTC offset now, in seconds. The platform gives wall-clock fields
+/// only, so compare them with UTC; rounding to 15 minutes absorbs the second
+/// that can pass between the two clock reads (no zone has a finer step).
+fn local_offset_secs(now_utc: i64, local: &platform::LocalTime) -> i64 {
+    let local_naive = days_from_civil(local.year.into(), local.month.into(), local.day.into()) * 86400
+        + i64::from(local.hour) * 3600
+        + i64::from(local.minute) * 60
+        + i64::from(local.second);
+    let diff = local_naive - now_utc;
+    (diff as f64 / 900.0).round() as i64 * 900
+}
+
+/// `(timeMin, timeMax)` for "the rest of today" in the user's time zone.
+fn gcal_window() -> (String, String) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let local = platform::local_time();
+    let offset = local_offset_secs(now, &local);
+    (
+        rfc3339_utc(now),
+        end_of_day_rfc3339(local.year.into(), local.month.into(), local.day.into(), offset),
+    )
+}
+
+async fn poll_gcal(app: AppHandle) {
+    let token = match oauth::access_token(&oauth::GOOGLE).await {
+        Ok(t) => t,
+        Err(oauth::AuthError::NotConnected) => return,
+        Err(e) => {
+            gcal_update(&app, json!({}), Some(e.message()));
+            return;
+        }
+    };
+    let (time_min, time_max) = gcal_window();
+    let response = client()
+        .get(GCAL_EVENTS)
+        .query(&[
+            ("timeMin", time_min.as_str()),
+            ("timeMax", time_max.as_str()),
+            ("singleEvents", "true"),
+            ("orderBy", "startTime"),
+            ("maxResults", "20"),
+        ])
+        .bearer_auth(&token)
+        .send()
+        .await;
+    let Ok(response) = response else { return };
+    let code = response.status().as_u16();
+    match code {
+        200 => {
+            let body: Value = response.json().await.unwrap_or(json!({}));
+            gcal_update(&app, json!({ "events": gcal_events(&body) }), None);
+        }
+        401 => oauth::forget_access_token(&oauth::GOOGLE), // stale: the next poll refreshes
+        429 => gcal_update(&app, json!({}), Some("Google is rate limiting, retrying".into())),
+        _ => gcal_update(&app, json!({}), Some(format!("Google Calendar error {code}"))),
+    }
+}
+
+/// The card's events from an `events.list` body: all-day first, then timed in
+/// the order Google returned them (by start). Cancelled and declined are dropped.
+fn gcal_events(body: &Value) -> Vec<Value> {
+    let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+    let pick = |v: &Value| text(v, "dateTime").or_else(|| text(v, "date"));
+    let mut all_day = Vec::new();
+    let mut timed = Vec::new();
+    for item in body.get("items").and_then(Value::as_array).into_iter().flatten() {
+        if item.get("status").and_then(Value::as_str) == Some("cancelled") {
+            continue;
+        }
+        let declined = item.get("attendees").and_then(Value::as_array).is_some_and(|a| {
+            a.iter().any(|x| {
+                x.get("self").and_then(Value::as_bool) == Some(true)
+                    && x.get("responseStatus").and_then(Value::as_str) == Some("declined")
+            })
+        });
+        if declined {
+            continue;
+        }
+        let Some(start) = item.get("start") else { continue };
+        let Some(start_at) = pick(start) else { continue };
+        let is_all_day = start.get("dateTime").is_none();
+        let event = json!({
+            "id": text(item, "id"),
+            "title": text(item, "summary").filter(|s| !s.is_empty()).unwrap_or_else(|| "(No title)".into()),
+            "start": start_at,
+            "end": item.get("end").and_then(pick),
+            "allDay": is_all_day,
+            "location": text(item, "location").filter(|s| !s.is_empty()),
+            "htmlLink": text(item, "htmlLink"),
+        });
+        if is_all_day {
+            all_day.push(event);
+        } else {
+            timed.push(event);
+        }
+    }
+    all_day.extend(timed);
+    all_day
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gcal_events_split_all_day_first_and_skip_cancelled_and_declined() {
+        let body = json!({ "items": [
+            { "id": "a", "summary": "Standup", "htmlLink": "https://g/a", "location": "Room 1",
+              "start": {"dateTime": "2026-10-05T09:00:00+11:00"}, "end": {"dateTime": "2026-10-05T09:15:00+11:00"} },
+            { "id": "b", "summary": "Holiday", "start": {"date": "2026-10-05"}, "end": {"date": "2026-10-06"} },
+            { "id": "c", "status": "cancelled", "summary": "Gone",
+              "start": {"dateTime": "2026-10-05T10:00:00+11:00"}, "end": {"dateTime": "2026-10-05T11:00:00+11:00"} },
+            { "id": "d", "summary": "Declined",
+              "attendees": [{"self": true, "responseStatus": "declined"}],
+              "start": {"dateTime": "2026-10-05T11:00:00+11:00"}, "end": {"dateTime": "2026-10-05T12:00:00+11:00"} },
+            { "id": "e", "summary": "Other declined",
+              "attendees": [{"responseStatus": "declined"}, {"self": true, "responseStatus": "accepted"}],
+              "start": {"dateTime": "2026-10-05T13:00:00+11:00"}, "end": {"dateTime": "2026-10-05T14:00:00+11:00"} },
+            { "id": "f", "start": {"dateTime": "2026-10-05T15:00:00+11:00"} }
+        ]});
+        let events = gcal_events(&body);
+        let ids: Vec<_> = events.iter().map(|e| e["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["b", "a", "e", "f"]);
+        assert_eq!(events[0]["allDay"], true);
+        assert_eq!(events[0]["start"], "2026-10-05");
+        assert_eq!(events[1]["allDay"], false);
+        assert_eq!(events[1]["title"], "Standup");
+        assert_eq!(events[1]["location"], "Room 1");
+        assert_eq!(events[1]["htmlLink"], "https://g/a");
+        assert_eq!(events[1]["end"], "2026-10-05T09:15:00+11:00");
+        assert_eq!(events[3]["title"], "(No title)");
+        assert!(events[3]["location"].is_null());
+    }
+
+    #[test]
+    fn gcal_events_of_an_empty_body_is_empty() {
+        assert!(gcal_events(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn end_of_day_uses_the_local_offset() {
+        assert_eq!(end_of_day_rfc3339(2026, 10, 5, 11 * 3600), "2026-10-05T23:59:59+11:00");
+        assert_eq!(end_of_day_rfc3339(2026, 7, 5, 10 * 3600), "2026-07-05T23:59:59+10:00");
+        assert_eq!(end_of_day_rfc3339(2026, 1, 9, 0), "2026-01-09T23:59:59+00:00");
+        assert_eq!(fmt_offset(-(3 * 3600 + 1800)), "-03:30");
+        assert_eq!(fmt_offset(5 * 3600 + 2700), "+05:45");
+    }
+
+    #[test]
+    fn local_offset_is_found_from_wall_clock_and_utc() {
+        // 2026-10-05 12:00:00 UTC is 23:00:00 in Sydney (+11:00).
+        let utc = days_from_civil(2026, 10, 5) * 86400 + 12 * 3600;
+        let local = platform::LocalTime { year: 2026, month: 10, day: 5, hour: 23, minute: 0, second: 1 };
+        assert_eq!(local_offset_secs(utc, &local), 11 * 3600);
+        // Across midnight: 20:00 UTC on the 5th is 07:00 on the 6th at +11.
+        let utc = days_from_civil(2026, 10, 5) * 86400 + 20 * 3600;
+        let local = platform::LocalTime { year: 2026, month: 10, day: 6, hour: 7, minute: 0, second: 0 };
+        assert_eq!(local_offset_secs(utc, &local), 11 * 3600);
+        // Behind UTC.
+        let local = platform::LocalTime { year: 2026, month: 10, day: 5, hour: 15, minute: 0, second: 0 };
+        assert_eq!(local_offset_secs(utc, &local), -5 * 3600);
+    }
+
+    #[test]
+    fn rfc3339_utc_formats_and_round_trips_dates() {
+        assert_eq!(rfc3339_utc(0), "1970-01-01T00:00:00Z");
+        let secs = days_from_civil(2026, 10, 5) * 86400 + 3 * 3600 + 4 * 60 + 5;
+        assert_eq!(rfc3339_utc(secs), "2026-10-05T03:04:05Z");
+        assert_eq!(rfc3339_utc(days_from_civil(2024, 2, 29) * 86400), "2024-02-29T00:00:00Z");
+    }
 
     #[test]
     fn spotify_data_for_a_track() {

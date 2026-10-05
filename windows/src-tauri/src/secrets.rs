@@ -20,6 +20,13 @@ pub const KNOWN_KEYS: &[&str] = &[
     "spotify-access-token",
     "spotify-refresh-token",
     "spotify-token-expiry",
+    // Google Calendar sign-in (oauth.rs): client id and secret are the user's own
+    // desktop client, the rest are the tokens the sign-in produces.
+    "gcal-client-id",
+    "gcal-client-secret",
+    "gcal-access-token",
+    "gcal-refresh-token",
+    "gcal-token-expiry",
 ];
 
 fn entry(key: &str) -> Option<Entry> {
