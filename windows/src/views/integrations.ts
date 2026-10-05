@@ -57,7 +57,12 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const error = info?.error ?? null;
   // The Claude Code pill is about hooks, not a key — the macOS wording would be
   // misleading here.
-  const missing = task.id === "integration_claude" ? "Hooks not installed" : "Key not configured";
+  const missing =
+    task.id === "integration_claude"
+      ? "Hooks not installed"
+      : task.id === "integration_spotify"
+        ? "Not connected"
+        : "Key not configured";
   const label = error ?? (configured ? "Connected · loading…" : missing);
   const statusColor = error || !configured ? "#F4505E" : "#22C55E";
 
@@ -258,6 +263,67 @@ function calcomCard(): HTMLElement {
   return h("div", { class: "int-card" }, header("#C9956A", "Cal.com", "Schedule"), rows);
 }
 
+// ── Spotify ───────────────────────────────────────────────────────────────────
+
+/** Last control failure ("Open Spotify on a device"); cleared by the next click or poll. */
+let spotifyNote: string | null = null;
+
+function spotifyControl(action: "play" | "pause" | "next" | "previous") {
+  spotifyNote = null;
+  Bridge.spotifyControl(action).catch((err) => {
+    spotifyNote = String(err).replace(/^Error:\s*/, "");
+    State.notify();
+  });
+}
+
+function spotifyCard(task: AgentTask): HTMLElement {
+  const d = get("integration_spotify");
+  const title = typeof d.title === "string" ? d.title : "";
+  const playing = d.playing === true;
+  const trackUrl = typeof d.trackUrl === "string" ? d.trackUrl : "";
+  const color = task.color;
+
+  const control = (icon: string, label: string, action: "play" | "pause" | "next" | "previous", big = false) =>
+    h(
+      "button",
+      { class: big ? "sp-btn big" : "sp-btn", title: label, "aria-label": label, onclick: () => spotifyControl(action) },
+      svg(icon, big ? 12 : 10),
+    );
+  const buttons = h(
+    "div",
+    { class: "sp-controls" },
+    control(ICONS.skipBack, "Previous", "previous"),
+    playing
+      ? control(ICONS.pause, "Pause", "pause", true)
+      : control(ICONS.play, "Play", "play", true),
+    control(ICONS.skipForward, "Next", "next"),
+  );
+
+  const body = h("div", { class: "int-rows tight" });
+  if (!title) {
+    body.append(h("div", { class: "int-empty", text: spotifyNote ?? "Nothing playing" }));
+  } else {
+    const name = h("button", {
+      class: "sp-title",
+      title: trackUrl ? "Open in Spotify" : "",
+      text: title,
+      onclick: () => {
+        if (trackUrl) void Bridge.openUrl(trackUrl);
+      },
+    });
+    const progress = Number(d.progressMs ?? 0);
+    const duration = Number(d.durationMs ?? 0);
+    const fraction = duration > 0 ? Math.max(0, Math.min(1, progress / duration)) : 0;
+    const bar = h("div", { class: "sp-bar" }, h("i", { style: `width:${(fraction * 100).toFixed(1)}%;background:${color}` }));
+    body.append(
+      name,
+      h("div", { class: "sp-artist", text: spotifyNote ?? String(d.artist ?? "") }),
+      bar,
+    );
+  }
+  return h("div", { class: "int-card" }, header(color, "Spotify", playing ? "Playing" : "Player"), body, buttons);
+}
+
 // ── n8n ───────────────────────────────────────────────────────────────────────
 
 function n8nCard(task: AgentTask, onDetail: () => void, openSettings: () => void): HTMLElement {
@@ -337,6 +403,8 @@ export function hasIntegrationData(id: string): boolean {
       return arr(id, "pages").length > 0;
     case "integration_calcom":
       return info.loaded;
+    case "integration_spotify":
+      return info.loaded;
     default:
       return false;
   }
@@ -361,6 +429,8 @@ export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHoo
       return notionCard();
     case "integration_calcom":
       return calcomCard();
+    case "integration_spotify":
+      return spotifyCard(task);
     default:
       return idleCard(task, hooks.openSettings);
   }

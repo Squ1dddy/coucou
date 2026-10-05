@@ -97,6 +97,15 @@ export const Bridge = {
   /** Opens the configured n8n instance in the browser. */
   openN8n: () => call<void>("open_n8n"),
 
+  // ── OAuth sign-in (tokens stay in Rust; only a yes/no comes back) ─────────
+  /** Opens the browser sign-in and resolves once it finishes (up to 5 min). */
+  oauthConnect: (provider: string) => callOrThrow<void>("oauth_connect", { provider }),
+  oauthDisconnect: (provider: string) => callOrThrow<void>("oauth_disconnect", { provider }),
+  oauthStatus: (provider: string) => call<boolean>("oauth_status", { provider }),
+  /** play | pause | next | previous. Rejects with a readable message. */
+  spotifyControl: (action: "play" | "pause" | "next" | "previous") =>
+    callOrThrow<void>("spotify_control", { action }),
+
   /** Tray → Pause. Stops the integration pollers, not just the island. */
   setPaused: (paused: boolean) => call<void>("set_paused", { paused }),
 };

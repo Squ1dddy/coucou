@@ -262,6 +262,8 @@ interface IntegrationDef {
   color: string;
   /** Credential Manager keys, in the order they are shown. */
   fields: { key: string; label: string; placeholder: string; secret: boolean }[];
+  /** Signs in with OAuth: adds a Connect / Disconnect button under the fields. */
+  oauth?: "spotify";
 }
 
 const INTEGRATIONS: IntegrationDef[] = [
@@ -278,9 +280,51 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "notion-api-key", label: "Integration token", placeholder: "ntn_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
     fields: [{ key: "calcom-api-key", label: "API key", placeholder: "cal_…", secret: true }] },
+  { id: "integration_spotify", name: "Spotify", color: "#1DB954", oauth: "spotify",
+    fields: [{ key: "spotify-client-id", label: "Client ID", placeholder: "From your Spotify app", secret: false }] },
 ];
 
 const MAX_ACTIVE = 4;
+
+/** Connect / Disconnect row. Only the yes/no status ever reaches this page. */
+function oauthRow(provider: string): HTMLElement {
+  const dotEl = statusDot(false);
+  const label = h("span", { class: "hint", text: "Not connected" });
+  const button = h("button", { class: "primary", text: "Connect" });
+  const feedback = h("div", {});
+
+  async function refresh() {
+    const on = (await Bridge.oauthStatus(provider)) ?? false;
+    dotEl.style.background = on ? "#22c55e" : "#f4505e";
+    label.textContent = on ? "Connected" : "Not connected";
+    button.textContent = on ? "Disconnect" : "Connect";
+    button.className = on ? "danger" : "primary";
+    button.disabled = false;
+    button.dataset.on = on ? "1" : "";
+  }
+
+  button.addEventListener("click", async () => {
+    clear(feedback);
+    button.disabled = true;
+    try {
+      if (button.dataset.on) {
+        await Bridge.oauthDisconnect(provider);
+      } else {
+        button.textContent = "Waiting for your browser…";
+        await Bridge.oauthConnect(provider);
+      }
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: String(err).replace(/^Error:\s*/, "") }));
+    }
+    await refresh();
+  });
+
+  void refresh();
+  return h("div", {},
+    h("div", { class: "row" }, h("label", { style: "min-width:104px", text: "Account" }), button, dotEl, label),
+    feedback,
+  );
+}
 
 function integrationsSection(present: Record<string, boolean>): HTMLElement {
   const note = h("div", { class: "hint" });
@@ -337,6 +381,8 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
         ),
       );
     }
+
+    if (def.oauth) rows.append(oauthRow(def.oauth));
 
     list.append(
       h("div", { style: "display:flex;gap:12px;align-items:flex-start" },
@@ -430,7 +476,7 @@ async function main() {
 
   const keys = [
     "stripe-api-key", "vercel-token",
-    "n8n-url", "n8n-api-key", "notion-api-key", "calcom-api-key",
+    "n8n-url", "n8n-api-key", "notion-api-key", "calcom-api-key", "spotify-client-id",
   ];
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;

@@ -6,6 +6,7 @@ mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod oauth;
 mod pipe;
 mod platform;
 mod secrets;
@@ -306,6 +307,12 @@ async fn refresh_integration(app: AppHandle, id: String) {
     integrations::poll_once(app, &id).await;
 }
 
+/// Spotify controls in the card: play | pause | next | previous.
+#[tauri::command]
+async fn spotify_control(app: AppHandle, action: String) -> Result<(), String> {
+    integrations::spotify_control(app, &action).await
+}
+
 /// Lets the island write to the same log as the Rust side.
 #[tauri::command]
 fn log_line(message: String) {
@@ -431,6 +438,10 @@ pub fn run() {
             open_n8n,
             open_settings_window,
             set_paused,
+            oauth::oauth_connect,
+            oauth::oauth_disconnect,
+            oauth::oauth_status,
+            spotify_control,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

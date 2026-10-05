@@ -18,6 +18,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::island::WINDOW_LABEL;
 use crate::log;
+use crate::oauth;
 use crate::secrets;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -66,7 +67,41 @@ pub fn start(app: AppHandle) {
     spawn(app.clone(), "integration_vercel", 5, 30, poll_vercel);
     spawn(app.clone(), "integration_stripe", 6, 30, poll_stripe);
     spawn(app.clone(), "integration_calcom", 8, 300, poll_calcom);
-    spawn(app, "integration_notion", 9, 300, poll_notion);
+    spawn(app.clone(), "integration_notion", 9, 300, poll_notion);
+    spawn_spotify(app);
+}
+
+/// Spotify runs its own loop: 5 s while the island is showing, 30 s while it is
+/// collapsed. The same paused / switched-off guards as every other poller, plus
+/// nothing at all until the user has signed in.
+fn spawn_spotify(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        let mut last: Option<std::time::Instant> = None;
+        let mut ticker = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            ticker.tick().await;
+            if !spotify_allowed(&app) {
+                continue;
+            }
+            let collapsed = app
+                .try_state::<crate::Shared>()
+                .map(|s| s.gate.collapsed.load(Ordering::Relaxed))
+                .unwrap_or(true);
+            if collapsed && last.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) {
+                continue;
+            }
+            last = Some(std::time::Instant::now());
+            poll_spotify(app.clone()).await;
+        }
+    });
+}
+
+/// Not paused, switched on in settings, and signed in.
+fn spotify_allowed(app: &AppHandle) -> bool {
+    !PAUSED.load(Ordering::Relaxed)
+        && enabled(app, "integration_spotify")
+        && oauth::connected(&oauth::SPOTIFY)
 }
 
 /// True when the user has this integration switched on in settings.
@@ -109,6 +144,7 @@ pub async fn poll_once(app: AppHandle, id: &str) {
         "integration_n8n" => poll_n8n(app).await,
         "integration_notion" => poll_notion(app).await,
         "integration_calcom" => poll_calcom(app).await,
+        "integration_spotify" if spotify_allowed(&app) => poll_spotify(app).await,
         _ => {}
     }
 }
@@ -639,5 +675,149 @@ fn fmt_value(v: &Value) -> String {
         Value::Array(a) => format!("[{}]", a.len()),
         Value::Object(_) => "{…}".into(),
         other => other.to_string(),
+    }
+}
+
+// ── Spotify ───────────────────────────────────────────────────────────────────
+
+const SPOTIFY_API: &str = "https://api.spotify.com/v1/me/player";
+
+fn spotify_update(app: &AppHandle, data: Value, error: Option<String>) {
+    // Never an `event`: music gets no sound and no badge.
+    emit(app, IntegrationUpdate { id: "integration_spotify", data, error, event: None });
+}
+
+async fn poll_spotify(app: AppHandle) {
+    let token = match oauth::access_token(&oauth::SPOTIFY).await {
+        Ok(t) => t,
+        Err(oauth::AuthError::NotConnected) => return,
+        Err(e) => {
+            spotify_update(&app, json!({}), Some(e.message()));
+            return;
+        }
+    };
+    let response = client()
+        .get(format!("{SPOTIFY_API}/currently-playing?additional_types=episode"))
+        .bearer_auth(&token)
+        .send()
+        .await;
+    let Ok(response) = response else { return };
+    let code = response.status().as_u16();
+    match code {
+        // Nothing playing is a normal state, not an error.
+        204 => spotify_update(&app, spotify_data(&json!({})), None),
+        200 => {
+            let body: Value = response.json().await.unwrap_or(json!({}));
+            spotify_update(&app, spotify_data(&body), None);
+        }
+        401 => oauth::forget_access_token(&oauth::SPOTIFY), // stale: the next tick refreshes
+        429 => spotify_update(&app, json!({}), Some("Spotify is rate limiting, retrying".into())),
+        _ => spotify_update(&app, json!({}), Some(format!("Spotify error {code}"))),
+    }
+}
+
+/// The card's data from a `currently-playing` body. Empty body means not playing.
+fn spotify_data(body: &Value) -> Value {
+    let Some(item) = body.get("item").filter(|i| i.is_object()) else {
+        return json!({ "playing": false });
+    };
+    let names = |list: Option<&Value>| {
+        list.and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.get("name").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .filter(|s| !s.is_empty())
+    };
+    // Podcast episodes have a show instead of artists and an album.
+    let show = item.get("show").and_then(|s| s.get("name")).and_then(Value::as_str);
+    let artist = names(item.get("artists")).or_else(|| show.map(str::to_string));
+    let album = item.get("album").and_then(|a| a.get("name")).and_then(Value::as_str).or(show);
+    // Images come largest first; the card only needs a small one.
+    let art = item
+        .get("album")
+        .or_else(|| item.get("show"))
+        .and_then(|a| a.get("images"))
+        .and_then(Value::as_array)
+        .and_then(|imgs| imgs.last())
+        .and_then(|i| i.get("url"))
+        .and_then(Value::as_str);
+    json!({
+        "playing": body.get("is_playing").and_then(Value::as_bool).unwrap_or(false),
+        "title": item.get("name").and_then(Value::as_str),
+        "artist": artist,
+        "album": album,
+        "artUrl": art,
+        "progressMs": body.get("progress_ms").and_then(Value::as_u64).unwrap_or(0),
+        "durationMs": item.get("duration_ms").and_then(Value::as_u64).unwrap_or(0),
+        "trackUrl": item.get("external_urls").and_then(|u| u.get("spotify")).and_then(Value::as_str),
+    })
+}
+
+/// play | pause | next | previous, then a poll so the card catches up at once.
+pub async fn spotify_control(app: AppHandle, action: &str) -> Result<(), String> {
+    let (method, path) = match action {
+        "play" => (reqwest::Method::PUT, "play"),
+        "pause" => (reqwest::Method::PUT, "pause"),
+        "next" => (reqwest::Method::POST, "next"),
+        "previous" => (reqwest::Method::POST, "previous"),
+        _ => return Err(format!("unknown action {action}")),
+    };
+    if !spotify_allowed(&app) {
+        return Err("Spotify is not connected".into());
+    }
+    let token = oauth::access_token(&oauth::SPOTIFY).await.map_err(|e| e.message())?;
+    let response = client()
+        .request(method, format!("{SPOTIFY_API}/{path}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|_| "No connection".to_string())?;
+    match response.status().as_u16() {
+        200..=299 => {}
+        404 => return Err("Open Spotify on a device".into()),
+        403 => return Err("Spotify refused (Premium is needed to control playback)".into()),
+        401 => {
+            oauth::forget_access_token(&oauth::SPOTIFY);
+            return Err("Try again".into());
+        }
+        code => return Err(format!("Spotify error {code}")),
+    }
+    // Spotify takes a moment to report the new state.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    poll_spotify(app).await;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spotify_data_for_a_track() {
+        let body = json!({
+            "is_playing": true, "progress_ms": 1200,
+            "item": {
+                "name": "Song", "duration_ms": 200000,
+                "artists": [{"name": "A"}, {"name": "B"}],
+                "album": {"name": "Album", "images": [{"url": "big"}, {"url": "small"}]},
+                "external_urls": {"spotify": "https://open.spotify.com/track/1"}
+            }
+        });
+        let d = spotify_data(&body);
+        assert_eq!(d["playing"], true);
+        assert_eq!(d["title"], "Song");
+        assert_eq!(d["artist"], "A, B");
+        assert_eq!(d["artUrl"], "small");
+        assert_eq!(d["durationMs"], 200000);
+        assert_eq!(d["trackUrl"], "https://open.spotify.com/track/1");
+    }
+
+    #[test]
+    fn spotify_data_for_nothing_playing() {
+        assert_eq!(spotify_data(&json!({})), json!({ "playing": false }));
+        assert_eq!(spotify_data(&json!({ "is_playing": true, "item": null })), json!({ "playing": false }));
     }
 }

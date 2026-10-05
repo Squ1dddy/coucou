@@ -16,10 +16,16 @@ const KEY_FOR: Record<string, string> = {
   integration_calcom: "calcom-api-key",
 };
 
+/** Pills that sign in with OAuth: configured means connected. */
+const OAUTH_FOR: Record<string, string> = {
+  integration_spotify: "spotify",
+};
+
 const clearTimers = new Map<string, number>();
 
 export function registerIntegrationHandlers(island: Island) {
   void onEvent<IntegrationUpdate>("integration", (update) => handle(island, update));
+  void onEvent<string>("oauth-changed", () => void refreshConfigured());
   void refreshConfigured();
 }
 
@@ -29,6 +35,19 @@ export async function refreshConfigured() {
     const present = (await Bridge.secretPresent(key)) ?? false;
     const info = State.integrations[id] ?? { data: {}, error: null, loaded: false, configured: false };
     State.integrations[id] = { ...info, configured: present };
+  }
+  for (const [id, provider] of Object.entries(OAUTH_FOR)) {
+    const connected = (await Bridge.oauthStatus(provider)) ?? false;
+    const info = State.integrations[id] ?? { data: {}, error: null, loaded: false, configured: false };
+    // Signing in or out drops what the last poll said, so the card starts clean.
+    State.integrations[id] =
+      connected === info.configured
+        ? info
+        : { data: {}, error: null, loaded: false, configured: connected };
+    if (!connected) {
+      const task = State.tasks.find((t) => t.id === id);
+      if (task) task.state = "idle";
+    }
   }
   const hooks = State.settings.hooksInstalled;
   const claude = State.integrations.integration_claude ?? {
@@ -48,6 +67,12 @@ function handle(island: Island, update: IntegrationUpdate) {
     loaded: update.error ? (previous?.loaded ?? false) : true,
     configured: previous?.configured ?? true,
   };
+
+  // Music has no events: the bot just bobs while something plays.
+  if (update.id === "integration_spotify" && !update.error) {
+    const task = State.tasks.find((t) => t.id === update.id);
+    if (task) task.state = update.data.playing === true ? "working" : "idle";
+  }
 
   const event = update.event;
   if (event) {

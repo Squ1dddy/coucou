@@ -14,6 +14,12 @@ pub const KNOWN_KEYS: &[&str] = &[
     "stripe-api-key",
     "notion-api-key",
     "calcom-api-key",
+    // Spotify sign-in (oauth.rs): the client id is the user's own app id, the
+    // rest are the tokens the sign-in produces.
+    "spotify-client-id",
+    "spotify-access-token",
+    "spotify-refresh-token",
+    "spotify-token-expiry",
 ];
 
 fn entry(key: &str) -> Option<Entry> {
