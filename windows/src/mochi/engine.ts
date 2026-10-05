@@ -67,8 +67,8 @@ const EYE_SP = 0.37;
 const EYE_P = -0.12;
 /** Mochi's body: Claude orange. The one source for every canvas that paints Mochi
  *  (engine body + hands, greeting, upload mailbox), so the morphs never flash. */
-export const MOCHI_TOP_HEX = "#E38C69";
-export const MOCHI_BOTTOM_HEX = "#D2704B";
+export const MOCHI_TOP_HEX = "#DE8A6E";
+export const MOCHI_BOTTOM_HEX = "#C86D50";
 const BASE_TOP: RGB = hexToRGB(MOCHI_TOP_HEX);
 const BASE_BOTTOM: RGB = hexToRGB(MOCHI_BOTTOM_HEX);
 const INK = "rgb(26,20,18)"; // #1A1412
@@ -135,6 +135,12 @@ const rgba = (c: RGB, a = 1) =>
 const mix3 = (a: RGB, b: RGB, t: number): RGB => [
   lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t),
 ];
+
+/** The body gradient every bot uses: its colour, a touch lighter on top and a
+ *  touch darker below (Mochi's own pair is MOCHI_TOP_HEX/MOCHI_BOTTOM_HEX, the
+ *  same formula applied to Claude orange #D97757). */
+const bodyTop = (c: RGB): RGB => mix3(c, [1, 1, 1], 0.14);
+const bodyBottom = (c: RGB): RGB => mix3(c, [0, 0, 0], 0.08);
 
 function roundRectPath(x: CanvasRenderingContext2D, X: number, Y: number, W: number, H: number, R: number) {
   const r = Math.max(0, Math.min(R, W / 2, H / 2));
@@ -779,33 +785,17 @@ export class BotEngine {
     return p;
   }
 
-  private drawBody(x: CanvasRenderingContext2D, body: Path2D, R: number, rx: number, ry: number) {
-    if (this.bodyColor) {
-      // Mini bots: flat solid fill — no gradient, no reflection, no highlight
-      x.fillStyle = rgba(this.bodyColor, 1);
-      x.fill(body);
-      return;
-    }
-    const g = x.createLinearGradient(rx * 0.7, -ry * 0.85, -rx * 0.8, ry * 0.9);
-    g.addColorStop(0, rgba(BASE_TOP));
-    g.addColorStop(1, rgba(BASE_BOTTOM));
+  private drawBody(x: CanvasRenderingContext2D, body: Path2D, _R: number, _rx: number, ry: number) {
+    // Flat 2D look for every bot: one colour, slightly lighter at the top and
+    // slightly darker at the bottom. No shine, no edge shading (they read as 3D).
+    // No state-colour wash either: over Claude orange, blue and purple turn muddy
+    // grey; the state reads from the badge, the glow and the eyes instead.
+    const top = this.bodyColor ? bodyTop(this.bodyColor) : BASE_TOP;
+    const bottom = this.bodyColor ? bodyBottom(this.bodyColor) : BASE_BOTTOM;
+    const g = x.createLinearGradient(0, -ry, 0, ry);
+    g.addColorStop(0, rgba(top));
+    g.addColorStop(1, rgba(bottom));
     x.fillStyle = g;
-    x.fill(body);
-
-    // No state-colour wash on the body: over Claude orange, blue and purple turn
-    // muddy grey. The state reads from the badge, the glow and the eyes instead.
-
-    const sh = x.createRadialGradient(0, 0, R * 0.15, 0, 0, R * 1.25);
-    sh.addColorStop(0, "rgba(0,0,0,0)");
-    sh.addColorStop(0.6, "rgba(0,0,0,0)");
-    sh.addColorStop(1, "rgba(0,0,0,0.2)");
-    x.fillStyle = sh;
-    x.fill(body);
-
-    const hl = x.createRadialGradient(rx * 0.34, -ry * 0.46, 0, rx * 0.34, -ry * 0.46, R * 0.42);
-    hl.addColorStop(0, "rgba(255,255,255,0.55)");
-    hl.addColorStop(1, "rgba(255,255,255,0)");
-    x.fillStyle = hl;
     x.fill(body);
   }
 

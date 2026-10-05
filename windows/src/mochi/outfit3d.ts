@@ -170,8 +170,6 @@ export interface AccessoryOpts {
   miniInk: string;
 }
 
-const SHELL = "#111317";
-const CUSHION = "#2A2D33";
 
 /**
  * Draws one pass of an accessory. `ctx` is already inside the body transform.
@@ -193,24 +191,14 @@ function inPass(z: number, behind: boolean) {
 }
 
 // Headphones ------------------------------------------------------------------
+//
+// Flat 2D, like the rest of the bot: one dark band resting on the top edge of the
+// head and two pads straddling the sides, no shine. Only the anchor points come
+// from the 3D head, so the prop still turns, tilts, squashes and rolls with it.
 
-const BAND_S = 1.02;
-/** The band's plane leans forward over the crown, so from the default view it sits
- *  visibly on the head instead of peeking over the back of the silhouette. */
-const BAND_LEAN = 0.32;
-/** Minis: band and cups sit inside the silhouette so they read against the body,
- *  not against the dark island (black on black vanished). */
-const MINI_BAND_S = 0.9;
-const MINI_CUP_X = 0.8;
-
-function bandPoint(a: number, scale = BAND_S): Vec3 {
-  // Side-to-side great circle (the x-y plane), following the head's superellipse.
-  const e = 2 / K_EXP;
-  const c = Math.cos(a), s = Math.sin(a);
-  const px = (c >= 0 ? 1 : -1) * Math.pow(Math.abs(c), e);
-  const py = Math.pow(Math.max(0, s), e);
-  return [px * scale, py * scale * Math.cos(BAND_LEAN), py * scale * Math.sin(BAND_LEAN)];
-}
+const HP = "#1C1D22";
+const HP_PAD = "#3A3C44";
+const CUP_Y = 0.04;
 
 function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh: number, r: number) {
   const rr = Math.max(0, Math.min(r, W / 2, Hh / 2));
@@ -225,59 +213,48 @@ function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh:
 
 function drawHeadphones(x: CanvasRenderingContext2D, H: MochiH, behind: boolean, o: AccessoryOpts) {
   const R = H.R;
-  const flat = o.mini;
-  const dark = flat ? o.miniInk : SHELL;
+  const mini = o.mini;
+  const cw = R * (mini ? 0.42 : 0.32);
+  const ch = R * (mini ? 0.66 : 0.56);
+  // Minis sit the whole prop inside the silhouette: at 13-24 px, dark parts on
+  // the edge vanish against the dark island.
+  const cupX = mini ? 0.8 : 1;
+  const cupZ = mini ? 0.35 : 0;
+  const left = mProjRoll(H, [-cupX, CUP_Y, cupZ]);
+  const right = mProjRoll(H, [cupX, CUP_Y, cupZ]);
+  const apex = mProjRoll(H, [0, 1, 0.05]);
 
   x.save();
   x.scale(o.scale, o.scale);
 
-  // Band: polyline of the great circle, split by depth so each pass draws its part.
-  const n = 44;
-  const pts: P3[] = [];
-  const bandS = flat ? MINI_BAND_S : BAND_S;
-  for (let i = 0; i <= n; i++) pts.push(mProjRoll(H, bandPoint((i / n) * Math.PI, bandS)));
-  const bandPath = (dx: number, dy: number) => {
-    const p = new Path2D();
-    let pen = false;
-    for (let i = 0; i < n; i++) {
-      const a = pts[i], b = pts[i + 1];
-      if (!inPass((a.z + b.z) / 2, behind)) { pen = false; continue; }
-      if (!pen) { p.moveTo(a.x + dx, a.y + dy); pen = true; }
-      p.lineTo(b.x + dx, b.y + dy);
-    }
-    return p;
-  };
-  x.lineCap = "round";
-  x.lineJoin = "round";
-  x.strokeStyle = dark;
-  x.lineWidth = R * (flat ? 0.22 : 0.14);
-  x.stroke(bandPath(0, 0));
-  if (!flat) {
-    x.strokeStyle = "rgba(255,255,255,0.22)";
-    x.lineWidth = R * 0.04;
-    x.stroke(bandPath(R * 0.03, -R * 0.035));
+  // Band: one smooth curve from the top of each pad through the crown, lifted a
+  // touch so it rests on the edge (half over the head, half outside).
+  if (inPass(apex.z, behind)) {
+    const ax = left.x, ay = left.y - ch * 0.35;
+    const bx = right.x, by = right.y - ch * 0.35;
+    const topY = apex.y + R * (mini ? 0.16 : 0.02);
+    // A cubic whose controls sit straight above each pad hugs Mochi's boxy
+    // top (a quadratic bulged past the corners); its midpoint lands on the crown.
+    const cY = (8 * topY - ay - by) / 6;
+    x.beginPath();
+    x.moveTo(ax, ay);
+    x.bezierCurveTo(ax, cY, bx, cY, bx, by);
+    x.lineCap = "round";
+    x.strokeStyle = HP;
+    x.lineWidth = R * (mini ? 0.22 : 0.15);
+    x.stroke();
   }
 
-  // Ear cups: screen-space pads centred on the head's side, straddling the silhouette.
-  const cw = R * (flat ? 0.4 : 0.3);
-  const ch = R * (flat ? 0.62 : 0.52);
-  const cupX = flat ? MINI_CUP_X : 1.0;
-  for (const sd of [-1, 1]) {
-    const c = mProjRoll(H, [sd * cupX, 0.06, flat ? 0.35 : 0]);
+  // Pads: the near one in front; the far one behind once a turn hides its centre,
+  // so its outer half still shows past the silhouette.
+  for (const c of [left, right]) {
     if (!inPass(c.z, behind)) continue;
-    rrect(x, c.x - cw / 2, c.y - ch / 2, cw, ch, cw / 2);
-    x.fillStyle = dark;
+    rrect(x, c.x - cw / 2, c.y - ch / 2, cw, ch, cw * 0.48);
+    x.fillStyle = HP;
     x.fill();
-    if (flat) continue;
-    // cushion on the side facing the head
-    const iw = cw * 0.5, ih = ch * 0.78;
-    rrect(x, c.x - sd * cw * 0.28 - iw / 2, c.y - ih / 2, iw, ih, iw / 2);
-    x.fillStyle = CUSHION;
-    x.fill();
-    // soft highlight, top right
-    x.beginPath();
-    x.ellipse(c.x + cw * 0.12, c.y - ch * 0.28, cw * 0.14, ch * 0.09, -0.4, 0, Math.PI * 2);
-    x.fillStyle = "rgba(255,255,255,0.20)";
+    if (mini) continue;
+    rrect(x, c.x - cw * 0.24, c.y - ch * 0.32, cw * 0.48, ch * 0.64, cw * 0.24);
+    x.fillStyle = HP_PAD;
     x.fill();
   }
   x.restore();

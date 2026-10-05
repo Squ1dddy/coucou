@@ -359,18 +359,9 @@ function drawMochi(x: CanvasRenderingContext2D, p: Pose) {
   drawHandR(x, hw, hh, p);
 
   const body = mochiPath(hw, hh);
-  whiteFill(x, body, hw * 0.6, -hh, -hw * 0.6, hh);
-
-  if (p.tint > 0) {
-    const g = x.createLinearGradient(0, hh, 0, -hh * 0.1);
-    g.addColorStop(0, `rgba(127,180,234,${p.tint})`);
-    g.addColorStop(1, "rgba(127,180,234,0)");
-    x.save();
-    x.clip(body);
-    x.fillStyle = g;
-    x.fill(body);
-    x.restore();
-  }
+  // Flat 2D body, same vertical light-to-dark gradient as the engine; no blue
+  // tint wash (it turns muddy over orange).
+  whiteFill(x, body, 0, -hh, 0, hh);
 
   // Eyes
   x.save();

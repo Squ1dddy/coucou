@@ -303,18 +303,10 @@ export class UploadCanvas {
     const { rx, ry } = bodyPath(ctx, f.morph, R);
 
     // Body.
-    const bg = ctx.createLinearGradient(rx * 0.7, -ry * 0.9, -rx * 0.8, ry * 0.9);
+    const bg = ctx.createLinearGradient(0, -ry, 0, ry);
     bg.addColorStop(0, MOCHI_TOP_HEX);
     bg.addColorStop(1, MOCHI_BOTTOM_HEX);
     ctx.fillStyle = bg;
-    ctx.fill();
-
-    // Edge shadow.
-    const sg = ctx.createRadialGradient(0, 0, R * 0.2, 0, 0, R * 1.3);
-    sg.addColorStop(0, "rgba(0,0,0,0)");
-    sg.addColorStop(0.62, "rgba(0,0,0,0)");
-    sg.addColorStop(1, "rgba(0,0,0,0.12)");
-    ctx.fillStyle = sg;
     ctx.fill();
 
     // The body path is reused as a clip for everything drawn inside it.
