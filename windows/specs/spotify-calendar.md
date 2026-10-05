@@ -70,6 +70,11 @@ A wizard script walks Beau through:
 - **State tints** (working blue, approval amber, etc.) overlay the body; check every state on the orange body stays readable, and adjust only the base gradient (not tint logic) if one turns muddy.
 - **Preview harness:** `windows/dev/mochi-preview.html` (served by the Vite dev server on :1420) renders big Mochi in every state, the roll/greet/squash animations, and mini bots with and without props, for visual checks without touching the real island.
 
+## Follow-up feature: liveness + plain-English activity (requested 2026-10-05)
+Beau: "a little more personality, a little more liveness".
+- **Working animations (ticket 7):** while a Claude Code session is working, Mochi shows what kind of work it is: a small thought bubble (thinking / planning), a tiny laptop it types on (editing / running commands), a magnifier (searching / reading). Drawn in code in the flat 2D style, same presence motion as the props (350 ms in with back, 180 ms out), fade with the upload morph, never alter existing animations. Pick the activity from the hook's `tool_name` (Edit/Write/Bash → typing, Read/Grep/Glob/WebFetch/WebSearch → searching, no tool / thinking → bubble). Try them in the harness, then show Beau.
+- **Plain-English activity (ticket 8):** the island's step text says what Claude is doing in words Beau understands, not tool names or code. Deterministic, no network: Bash uses its `description` field ("Run the tests"), Edit/Write → "Editing the <file-ish name>" (file name without path/extension jargon), Read → "Reading <name>", Grep/Glob → "Searching the code", WebSearch → "Searching the web for <query>", Task/Agent → its description, TodoWrite → the in-progress item's activeForm. Fallback: "Working…". Never show raw commands or paths.
+
 ## Out of scope
 Discord, Gmail, playlists/search/queue, writing calendar events, multiple calendars, Mac or iPhone changes.
 
