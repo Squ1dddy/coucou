@@ -41,6 +41,9 @@ const PRE_PROGRESS = USC.T_PROG_START - USC.T_DROP;
 
 const modeOrder = (m: IslandMode) => (m === "hidden" ? 0 : m === "compact" ? 1 : 2);
 
+
+/** Seconds an island opened by an alert (not by you) stays open. */
+const ALERT_CLOSE_S = 5;
 export class Island {
   readonly fsm = new IslandStateMachine();
 
@@ -366,6 +369,8 @@ export class Island {
   /** Alert from the hook server: open on this view. Pinned alerts never auto-close. */
   alert(view: IslandViewName) {
     this.fsm.pinned = State.isPinned;
+    // Nobody opened this one: give it time to be read. Hovering switches back to the setting.
+    this.fsm.homeToPetitDelay = ALERT_CLOSE_S;
     this.fsm.forceHome();
     this.expand(view);
   }
@@ -627,13 +632,14 @@ export class Island {
 
     if (inIsland && !this.wasInIsland) {
       if (this.fsm.state === "coucou") this.greeting.hover();
+      this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
       this.fsm.mouseEntered();
       this.homeCollapseAt = null;
     }
     if (!inIsland && this.wasInIsland) {
       this.fsm.mouseLeft();
       if (this.fsm.state === "home" && !State.isPinned) {
-        this.homeCollapseAt = performance.now() + State.settings.autoCloseInterval * 1000;
+        this.homeCollapseAt = performance.now() + this.fsm.homeToPetitDelay * 1000;
       }
     }
     this.wasInIsland = inIsland;
@@ -1114,7 +1120,7 @@ export class Island {
       this.countdown.style.width = "0px";
       return;
     }
-    const autoClose = State.settings.autoCloseInterval;
+    const autoClose = this.fsm.homeToPetitDelay;
     const windowS = Math.min(10, autoClose * 0.6);
     const remaining = (this.homeCollapseAt - nowMs) / 1000;
     this.countdown.style.width =
