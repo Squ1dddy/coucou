@@ -38,6 +38,11 @@ export interface AgentTask {
   pendingAgents?: PendingAgent[];
   /** Brand prop Mochi wears (headphones, calendar page). */
   accessory?: AccessoryKind | null;
+  /** Friendly rewrite of the current step (Ollama), and the plain step it was written for. */
+  friendly?: string | null;
+  friendlyFor?: string | null;
+  /** Friendly rewrite of the last answer, for the idle "Last:" line. */
+  friendlyIdle?: string | null;
 }
 
 /** A subagent a Claude session is running right now. Finished ones are removed. */
@@ -54,6 +59,9 @@ export interface Subagent {
   lastActivity: string;
   /** Last hook event of any kind from this subagent (ms). */
   lastEventAt: number;
+  /** Friendly rewrite of `lastActivity` (Ollama), and the plain text it was written for. */
+  friendly?: string;
+  friendlyFor?: string;
 }
 
 /** An Agent tool call seen on the parent, waiting for its SubagentStart. */
@@ -194,6 +202,8 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
+  /** A local Ollama rewrites Claude's activity text into a friendly line. */
+  friendlyActivity: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -206,6 +216,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  friendlyActivity: true,
 };
 
 type Listener = () => void;

@@ -31,16 +31,26 @@ export function claudeActive(task: AgentTask): boolean {
   return task.state !== "idle" && task.state !== "finished";
 }
 
-/** The big line. T3 swaps in a friendly rewrite here; keep it the one place. */
-export function claudeHeadline(task: AgentTask): string {
+/** States where the plain text always shows: the friendly line never covers them. */
+const PLAIN_ONLY = new Set<string>(["approval", "question", "thinking", "ratelimit", "error"]);
+
+/** The plain, rule-made line for what the session is doing; the small fact line. */
+export function claudePlain(task: AgentTask): string {
   // Before the first tool, the last step is the user's own prompt.
   if (task.state === "thinking") return "Thinking…";
   return task.steps.at(-1) ?? "Working…";
 }
 
-/** The subagent's big line. T3 swaps in a friendly rewrite here; keep it the one place. */
+/** The big line: the friendly rewrite for this step when there is one, else the plain text. */
+export function claudeHeadline(task: AgentTask): string {
+  const plain = claudePlain(task);
+  if (task.friendly && task.friendlyFor === plain && !PLAIN_ONLY.has(task.state)) return task.friendly;
+  return plain;
+}
+
+/** The subagent's big line: friendly rewrite of its latest step, else the plain text. */
 export function subagentHeadline(sub: Subagent): string {
-  return sub.lastActivity;
+  return sub.friendly && sub.friendlyFor === sub.lastActivity ? sub.friendly : sub.lastActivity;
 }
 
 function minutesSince(ms: number, now: number): number {
@@ -174,14 +184,15 @@ export function renderClaudePanel(task: AgentTask, hooks: ClaudePanelHooks): HTM
   if (claudeActive(task)) {
     const headline = claudeHeadline(task);
     top.append(h("div", { class: "cl-head", text: headline }));
-    const fact = task.promptAt ? `${headline} · ${elapsedText(task.promptAt, now)}` : headline;
+    const plain = claudePlain(task);
+    const fact = task.promptAt ? `${plain} · ${elapsedText(task.promptAt, now)}` : plain;
     top.append(h("div", { class: "cl-fact", text: fact }));
   } else if (task.steps.length > 0) {
     let ago = "";
     if (task.updatedAt) {
       ago = minutesSince(task.updatedAt, now) < 1 ? " · just now" : ` · ${elapsedText(task.updatedAt, now)} ago`;
     }
-    top.append(h("div", { class: "cl-fact idle", text: `Last: ${task.steps.at(-1)}${ago}` }));
+    top.append(h("div", { class: "cl-fact idle", text: `Last: ${task.friendlyIdle ?? task.steps.at(-1)}${ago}` }));
   } else if (!State.integrations.integration_claude?.configured) {
     top.append(h("div", { class: "int-status" }, dot("#F4505E", 5), h("span", { text: "Hooks not installed" })));
   } else {

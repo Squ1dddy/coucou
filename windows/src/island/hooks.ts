@@ -5,6 +5,7 @@
 
 import { describeActivity } from "../core/activity";
 import { Bridge, onEvent } from "../core/bridge";
+import { Friendly } from "../core/friendly";
 import { Sound } from "../core/sound";
 import { State, modelLabel, staleClaudeSessions, type ClaudeUsage } from "../core/state";
 import type { Island } from "./island";
@@ -27,6 +28,10 @@ interface HookPayload {
   /** Set on a subagent's own events (and SubagentStart/Stop). */
   agent_id?: string;
   agent_type?: string;
+  /** Path of the session's JSONL transcript. */
+  transcript_path?: string;
+  /** Stop: what Claude said last. */
+  last_assistant_message?: string;
   /** Optional agent tag: lowercase, digits and hyphens, ≤ 24 chars. */
   coucou_agent?: string;
 }
@@ -231,6 +236,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
   switch (name) {
     case "SessionStart":
+      if (!isExternalAgent) Friendly.warm();
       ensurePill();
       surface("overview", false);
       Sound.play("work");
@@ -241,8 +247,15 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(agentId, "thinking");
       {
         const t = State.tasks.find((x) => x.id === agentId);
-        if (t && !isExternalAgent) t.promptAt = Date.now();
+        if (t && !isExternalAgent) {
+          t.promptAt = Date.now();
+          // A new turn: nothing from the last one may show.
+          t.friendly = null;
+          t.friendlyFor = null;
+          t.friendlyIdle = null;
+        }
       }
+      if (!isExternalAgent) Friendly.warm();
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
       if (asked) State.appendStep(agentId, asked.slice(0, 60));
@@ -264,15 +277,17 @@ function handleHook(island: Island, payload: HookPayload) {
       }
       // A subagent's own tool call: it updates that subagent, never the parent.
       if (!isExternalAgent && payload.agent_id) {
-        State.touchSubagent(
-          agentId, payload.agent_id, describeActivity(payload.tool_name ?? "Tool", payload.tool_input ?? {}),
-        );
+        const plain = describeActivity(payload.tool_name ?? "Tool", payload.tool_input ?? {});
+        State.touchSubagent(agentId, payload.agent_id, plain);
+        Friendly.subagent(agentId, payload.agent_id, plain);
         break;
       }
       ensurePill();
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
-      State.appendStep(agentId, describeActivity(tool, payload.tool_input ?? {}));
+      const plain = describeActivity(tool, payload.tool_input ?? {});
+      State.appendStep(agentId, plain);
+      if (!isExternalAgent) Friendly.main(agentId, plain, payload.transcript_path);
       surface("overview", false);
       break;
     }
@@ -310,6 +325,7 @@ function handleHook(island: Island, payload: HookPayload) {
     case "Stop":
       State.updateTask(agentId, "finished");
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
+      if (!isExternalAgent && payload.last_assistant_message) Friendly.finished(agentId, payload.last_assistant_message);
       Sound.play("finish");
       if (focused) surface("finished", true);
       else State.setPillBadge(agentId, "finished");
