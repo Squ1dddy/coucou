@@ -23,6 +23,8 @@ import { ICONS } from "../views/icons";
 import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
+/** Clear space around the stage bot so confetti can fly past the card edges. */
+const BOT_FX_PAD = 120;
 /** Carousel slide: how far (px) the bot travels, and the end-of-list nudge. */
 const SLIDE_D = 56;
 const BUMP_PX = 6;
@@ -1068,7 +1070,10 @@ export class Island {
 
     if (State.mode === "expanded" && State.view !== "uploading" && !greetingActive && !this.uploadActive) {
       const d = p.diameter;
-      const color = botGlowColor(State.effectiveState);
+      // Busy states glow in the agent's own colour; alerts keep their signal colours.
+      const st = State.effectiveState;
+      const busy = st === "working" || st === "thinking" || st === "searching";
+      const color = busy && State.focusTask?.color ? State.focusTask.color : botGlowColor(st);
       this.botGlow.style.display = "block";
       this.botGlow.style.width = `${d * 2.2}px`;
       this.botGlow.style.height = `${d * 2.2}px`;
@@ -1084,17 +1089,18 @@ export class Island {
   private drawBot(dt: number) {
     const size = this.botSize.value;
     const w = Math.max(1, Math.round(size));
-    const hCss = w + BOT_OVERHANG;
+    const wCss = w + BOT_FX_PAD * 2;
+    const hCss = w + BOT_OVERHANG + BOT_FX_PAD * 2;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     if (this.canvasPx !== w || this.canvasDpr !== dpr) {
       this.canvasPx = w;
       this.canvasDpr = dpr;
-      this.botCanvas.width = Math.round(w * dpr);
+      this.botCanvas.width = Math.round(wCss * dpr);
       this.botCanvas.height = Math.round(hCss * dpr);
-      this.botCanvas.style.width = `${w}px`;
+      this.botCanvas.style.width = `${wCss}px`;
       this.botCanvas.style.height = `${hCss}px`;
     }
-    this.botCanvas.style.left = `${this.botCx.value - w / 2}px`;
+    this.botCanvas.style.left = `${this.botCx.value - wCss / 2}px`;
     this.botCanvas.style.top = `${this.botCy.value - BOT_OVERHANG / 2 - hCss / 2}px`;
 
     const ctx = this.botCanvas.getContext("2d");
@@ -1117,8 +1123,8 @@ export class Island {
     }
     this.engine.update(dt);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, hCss);
-    this.engine.draw(ctx, w, hCss);
+    ctx.clearRect(0, 0, wCss, hCss);
+    this.engine.draw(ctx, wCss, hCss, w);
   }
 
   /** BotCanvasView.lookX / lookY — tanh of the distance to the bot. */

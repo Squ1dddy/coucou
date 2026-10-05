@@ -800,9 +800,10 @@ export class BotEngine {
   /**
    * Draws hands, body, blush, eyes, mouth, badge and particles into a canvas of
    * `w`×`h` CSS pixels (the caller has already applied the DPR transform).
+   * `bodyW` sizes Mochi when the canvas is wider than the body (room for confetti).
    */
-  draw(x: CanvasRenderingContext2D, W: number, H: number) {
-    const R = W * 0.3;
+  draw(x: CanvasRenderingContext2D, W: number, H: number, bodyW = W) {
+    const R = bodyW * 0.3;
     const rx = R * 1.14;
     const ry = R * 0.88;
     const cx = W / 2 + this.ox * R;
