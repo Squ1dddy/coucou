@@ -62,10 +62,19 @@ interface BotStateCfg {
 }
 
 interface Particle {
-  type: "heart" | "star" | "spark" | "sweat" | "z";
+  type: "heart" | "star" | "spark" | "sweat" | "z" | "confetti";
   x: number; y: number; vx: number; vy: number;
   age: number; life: number; rot: number; size: number;
+  /** Confetti only: piece colour (CSS) and flutter phase. */
+  color?: string;
+  phase?: number;
 }
+
+/** Confetti physics, in the same units as the other particles (R * 1.3 per unit). */
+const CONFETTI_GRAVITY = 1.8;
+const CONFETTI_DRAG = 2.5;
+const CONFETTI_COUNT = 36;
+const CONFETTI_EXTRA_COLORS = ["#FFD23F", "#4DD2FF", "#FF5D8F", "#7BE495"];
 
 // ── Constants (MochiConst / PISTES.mochi) ─────────────────────────────────────
 
@@ -567,6 +576,34 @@ export class BotEngine {
         size: 0.15 + Math.random() * 0.08,
       });
     }
+  }
+
+  /**
+   * A long task finished well: confetti burst, a happy hop and a happy face.
+   * `color` is the task colour (CSS hex), mixed in with a few cheerful others.
+   * The sound is the caller's job so mute/volume stay in one place.
+   */
+  celebrate(color: string = MOCHI_TOP_HEX) {
+    const palette = [color, color, ...CONFETTI_EXTRA_COLORS];
+    for (let i = 0; i < CONFETTI_COUNT; i++) {
+      this.particles.push({
+        type: "confetti",
+        x: (Math.random() - 0.5) * 0.6,
+        y: -0.45,
+        vx: (Math.random() - 0.5) * 2.2,
+        vy: -(0.9 + Math.random() * 0.9),
+        age: -Math.random() * 0.12,
+        life: 1.6 + Math.random() * 0.6,
+        rot: Math.random() * Math.PI * 2,
+        size: 0.09 + Math.random() * 0.05,
+        color: palette[Math.floor(Math.random() * palette.length)],
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+    this.triggerEmote("happy", 1.8);
+    this.anim("oy", [[-0.32, 200, Ease.out], [0, 300, Ease.back]]);
+    this.anim("sy", [[0.86, 70, Ease.out], [1.12, 150, Ease.out], [1, 280, Ease.back]]);
+    this.anim("sx", [[1.1, 70, Ease.out], [0.94, 150, Ease.out], [1, 280, Ease.back]]);
   }
 
   animateMorph(target: number, durationMs?: number) {
@@ -1214,11 +1251,28 @@ export class BotEngine {
       if (p.age <= 0) continue;
       const k = p.age / p.life;
       const a = k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8;
-      const px = cx + (p.x + p.vx * p.age) * R * 1.3;
-      const py = cy + (p.y + p.vy * p.age) * R * 1.3;
+      let px = cx + (p.x + p.vx * p.age) * R * 1.3;
+      let py = cy + (p.y + p.vy * p.age) * R * 1.3;
       const sz = R * p.size * (1 + k * 0.4);
 
       x.save();
+      if (p.type === "confetti") {
+        // Air drag on the sideways burst, gravity down, a little sway as it flutters.
+        const ph = p.phase ?? 0;
+        const dx = p.vx * (1 - Math.exp(-CONFETTI_DRAG * p.age)) / CONFETTI_DRAG;
+        const dy = p.vy * p.age + 0.5 * CONFETTI_GRAVITY * p.age * p.age;
+        px = cx + (p.x + dx + Math.sin(p.age * 7 + ph) * 0.05) * R * 1.3;
+        py = cy + (p.y + dy) * R * 1.3;
+        x.translate(px, py);
+        x.globalAlpha = k < 0.7 ? 1 : Math.min(1, Math.max(0, (1 - k) / 0.3));
+        x.rotate(p.rot + p.age * (3 + ph));
+        x.scale(1, Math.cos(p.age * 9 + ph));
+        x.fillStyle = p.color ?? "#fff";
+        const w = R * p.size;
+        x.fillRect(-w, -w * 0.25, w * 2, w * 0.5);
+        x.restore();
+        continue;
+      }
       x.translate(px, py);
       x.globalAlpha = Math.min(1, Math.max(0, a));
       switch (p.type) {

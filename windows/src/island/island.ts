@@ -136,6 +136,7 @@ export class Island {
     State.subscribe(() => {
       this.dirty = true;
       this.noteFocus();
+      this.celebratePendingIfFocused();
       this.ensureRunning();
     });
   }
@@ -717,6 +718,22 @@ export class Island {
   }
 
   // ── Frame loop ──────────────────────────────────────────────────────────────
+
+  /** The stage Mochi celebrates: confetti, a hop and the proud sound. */
+  celebrate() {
+    if (State.mode === "hidden") return;
+    this.engine.celebrate(State.focusTask?.color);
+    Sound.play("proud");
+    this.ensureRunning();
+  }
+
+  /** A long turn finished off stage; the first time that session is on stage, it celebrates. */
+  private celebratePendingIfFocused() {
+    const t = State.focusTask;
+    if (!t?.celebratePending || State.mode === "hidden") return;
+    t.celebratePending = false;
+    this.celebrate();
+  }
 
   ensureRunning() {
     if (this.running) return;

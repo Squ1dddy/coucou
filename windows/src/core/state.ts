@@ -33,6 +33,8 @@ export interface AgentTask {
   startedAt?: number | null;
   /** Last UserPromptSubmit (ms). */
   promptAt?: number | null;
+  /** A long turn finished while this session was off stage: celebrate when it comes on. */
+  celebratePending?: boolean;
   /** Last step appended (ms). */
   updatedAt?: number | null;
   /** Last hook event of any kind for this session (ms), for expiring dead sessions. */
@@ -518,6 +520,7 @@ class AppState {
       main.sessionId = next.sessionId;
       main.startedAt = next.startedAt;
       main.promptAt = next.promptAt;
+      main.celebratePending = next.celebratePending;
       main.updatedAt = next.updatedAt;
       main.lastEventAt = next.lastEventAt;
       main.pillBadge = next.pillBadge;
@@ -539,6 +542,7 @@ class AppState {
       main.label = null;
       main.startedAt = null;
       main.promptAt = null;
+      main.celebratePending = false;
       main.updatedAt = null;
       main.lastEventAt = null;
     }

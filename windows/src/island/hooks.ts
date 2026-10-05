@@ -5,6 +5,7 @@
 
 import { describeActivity } from "../core/activity";
 import { Bridge, onEvent } from "../core/bridge";
+import { shouldCelebrate } from "../core/celebrate";
 import { Sound } from "../core/sound";
 import { State, modelLabel, staleClaudeSessions, type AgentTask, type ClaudeUsage } from "../core/state";
 import type { Island } from "./island";
@@ -154,6 +155,14 @@ export function registerHookHandlers(island: Island) {
   }, 60_000);
 
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+
+  // Dev only: window.__coucouCelebrate() runs the focused celebration without a 5-minute wait.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __coucouCelebrate?: () => void }).__coucouCelebrate = () => {
+      if (State.mode === "hidden") island.reveal();
+      window.setTimeout(() => island.celebrate(), 350);
+    };
+  }
   // Plan limits from Rust (Claude's get_usage, or the claude-hud file).
   void onEvent<ClaudeUsage>("claude-usage", (usage) => {
     State.claudeUsage = usage;
@@ -265,7 +274,10 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(agentId, "thinking");
       {
         const t = State.tasks.find((x) => x.id === agentId);
-        if (t && !isExternalAgent) t.promptAt = Date.now();
+        if (t && !isExternalAgent) {
+          t.promptAt = Date.now();
+          t.celebratePending = false;
+        }
       }
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
@@ -331,12 +343,20 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
     }
 
-    case "Stop":
+    case "Stop": {
+      // Only Claude's own clean Stop after a long turn; subagent stops are SubagentStop.
+      const stopTask = State.tasks.find((x) => x.id === agentId);
+      const celebrate = !isExternalAgent && !payload.agent_id && !!stopTask &&
+        shouldCelebrate(stopTask.promptAt, Date.now());
+      // Off stage: the finish chime and badge as before, the party waits for the focus.
+      if (celebrate && !focused && stopTask) stopTask.celebratePending = true;
       State.updateTask(agentId, "finished");
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
-      Sound.play("finish");
+      if (!(celebrate && focused)) Sound.play("finish");
       if (focused) surface("finished", true);
       else State.setPillBadge(agentId, "finished");
+      // Once the finished view has had a moment to open; plays "proud" instead of "finish".
+      if (celebrate && focused) window.setTimeout(() => island.celebrate(), 350);
       window.setTimeout(() => {
         if (isExternalAgent) {
           State.removeTask(agentId);
@@ -346,6 +366,7 @@ function handleHook(island: Island, payload: HookPayload) {
         }
       }, 5200);
       break;
+    }
 
     case "StopFailure":
       State.updateTask(agentId, "error");
