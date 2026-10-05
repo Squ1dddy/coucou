@@ -35,10 +35,8 @@ impl Default for Settings {
             auto_close_interval: 15.0,
             absence_interval: 180.0,
             active_integrations: vec![
-                "integration_resend".into(),
                 "integration_n8n".into(),
                 "integration_vercel".into(),
-                "integration_github".into(),
             ],
             screen: "secondary".into(),
             autostart: false,

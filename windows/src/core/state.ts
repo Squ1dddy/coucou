@@ -59,19 +59,26 @@ const task = (
 /** AgentTask.integrationAgents — same ids, names and colours as macOS. */
 export const INTEGRATION_AGENTS: AgentTask[] = [
   task("integration_claude", "Claude Code", "#E8916E", "claudeCode"),
-  task("integration_resend", "Resend", "#22C55E", "n8n"),
   task("integration_n8n", "n8n", "#F29B38", "n8n"),
   task("integration_vercel", "Vercel", "#7C5CFF", "n8n"),
-  task("integration_github", "GitHub", "#F4505E", "n8n"),
   task("integration_notion", "Notion", "#8C8C8C", "n8n"),
   task("integration_calcom", "Cal.com", "#C9956A", "n8n"),
   task("integration_stripe", "Stripe", "#0570DE", "n8n"),
 ];
 
 export const TOGGLEABLE_INTEGRATION_IDS = [
-  "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
+  "integration_n8n", "integration_vercel",
   "integration_notion", "integration_calcom", "integration_stripe",
 ];
+
+/** Drops connectors this build no longer has (e.g. GitHub, Resend) from saved
+ *  settings, so a stale id can't hold one of the four active slots. */
+export function withKnownIntegrations<T extends { activeIntegrations: string[] }>(s: T): T {
+  return {
+    ...s,
+    activeIntegrations: s.activeIntegrations.filter((id) => TOGGLEABLE_INTEGRATION_IDS.includes(id)),
+  };
+}
 
 /** What an integration poller last reported. */
 export interface IntegrationInfo {
@@ -99,9 +106,7 @@ export const DEFAULT_SETTINGS: Settings = {
   soundVolume: 0.12,
   autoCloseInterval: 15,
   absenceInterval: 180,
-  activeIntegrations: [
-    "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
-  ],
+  activeIntegrations: ["integration_n8n", "integration_vercel"],
   screen: "secondary",
   autostart: false,
   hooksInstalled: false,

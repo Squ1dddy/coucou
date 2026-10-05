@@ -45,9 +45,7 @@ function arr(id: string, key: string): Record<string, unknown>[] {
 // ── Not configured / idle ─────────────────────────────────────────────────────
 
 const OPEN_URLS: Record<string, string> = {
-  integration_resend: "https://resend.com/emails",
   integration_vercel: "https://vercel.com/dashboard",
-  integration_github: "https://github.com",
   integration_stripe: "https://dashboard.stripe.com/payments",
   integration_notion: "https://notion.so",
   integration_calcom: "https://app.cal.com/bookings",
@@ -171,61 +169,6 @@ function vercelDetail(onBack: () => void): HTMLElement {
       h("span", { class: "int-badge", style: `color:${accent};background:${accent}24`, text: status }),
     ),
     body,
-  );
-}
-
-// ── Resend ────────────────────────────────────────────────────────────────────
-
-function resendCard(): HTMLElement {
-  const emails = arr("integration_resend", "emails");
-  const total = get("integration_resend").total;
-  const extra =
-    total != null
-      ? h("span", { class: "int-total" }, h("i", { class: "pulse" }), h("span", { text: String(total) }))
-      : undefined;
-  const rows = h("div", { class: "int-rows" });
-  emails.slice(0, 3).forEach((e, i) => {
-    const delivered = e.lastEvent === "delivered";
-    const accent = delivered ? "#22C55E" : "#F4505E";
-    const to = Array.isArray(e.to) ? String(e.to[0] ?? "?") : "?";
-    const short = to.split("@")[0];
-    const cells: Node[] = [
-      h("span", { class: "int-name", text: short }),
-      h("span", { class: "int-ago", text: timeAgo(e.createdAt) }),
-    ];
-    if (i === 0 && e.subject) cells.push(h("span", { class: "int-sub", text: String(e.subject) }));
-    rows.append(listRow(accent, i === 0, ...cells));
-  });
-  return h("div", { class: "int-card" }, header("#22C55E", "Resend", "Emails", extra), rows);
-}
-
-// ── GitHub ────────────────────────────────────────────────────────────────────
-
-function statRow(icon: string, color: string, label: string, value: string): HTMLElement {
-  return h(
-    "div",
-    { class: "int-stat" },
-    h("i", { class: "int-stat-icon", style: `color:${color}` }, svg(icon, 10)),
-    h("span", { class: "int-stat-label", text: label }),
-    h("span", { class: "int-stat-value", text: value }),
-  );
-}
-
-function githubCard(): HTMLElement {
-  const d = get("integration_github");
-  const stars = Number(d.totalStars ?? 0);
-  const repos = Number(d.totalRepos ?? 0);
-  const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
-  return h(
-    "div",
-    { class: "int-card" },
-    header("#F4505E", "GitHub", "Overview"),
-    h(
-      "div",
-      { class: "int-stats" },
-      statRow(ICONS.star, "#F5A524", "Total stars", fmt(stars)),
-      statRow(ICONS.stack, "#6B7079", "Repositories", String(repos)),
-    ),
   );
 }
 
@@ -388,10 +331,6 @@ export function hasIntegrationData(id: string): boolean {
   switch (id) {
     case "integration_vercel":
       return arr(id, "deployments").length > 0;
-    case "integration_resend":
-      return arr(id, "emails").length > 0;
-    case "integration_github":
-      return get(id).totalRepos != null;
     case "integration_stripe":
       return info.loaded;
     case "integration_notion":
@@ -416,10 +355,6 @@ export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHoo
   if (!hasIntegrationData(task.id)) return idleCard(task, hooks.openSettings);
 
   switch (task.id) {
-    case "integration_resend":
-      return resendCard();
-    case "integration_github":
-      return githubCard();
     case "integration_stripe":
       return stripeCard();
     case "integration_notion":

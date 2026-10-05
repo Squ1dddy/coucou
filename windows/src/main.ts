@@ -3,7 +3,7 @@
 import "./style.css";
 import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
-import { State, type Settings } from "./core/state";
+import { State, withKnownIntegrations, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
@@ -18,7 +18,7 @@ async function main() {
 
   const boot = await Bridge.boot();
   if (boot) {
-    State.settings = { ...State.settings, ...boot.settings };
+    State.settings = withKnownIntegrations({ ...State.settings, ...boot.settings });
   }
   island.applySettings();
   State.loadIntegrationTasks();
@@ -55,7 +55,7 @@ async function main() {
 
   // The settings window writes preferences; apply them here without a restart.
   await onEvent<Settings>("settings-changed", (s) => {
-    State.settings = { ...State.settings, ...s };
+    State.settings = withKnownIntegrations({ ...State.settings, ...s });
     island.applySettings();
     State.loadIntegrationTasks();
     void refreshConfigured();

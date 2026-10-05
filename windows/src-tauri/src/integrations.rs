@@ -1,5 +1,5 @@
-// Integration pollers — the Rust side of StripePoller / GithubPoller /
-// VercelPoller / N8nPoller / ResendPoller / NotionPoller / CalcomPoller.
+// Integration pollers — the Rust side of StripePoller / VercelPoller /
+// N8nPoller / NotionPoller / CalcomPoller.
 //
 // Same endpoints, same first-run delays and intervals as the Swift pollers. Each
 // one emits an `integration` event; the island owns the badge, the sound and the
@@ -65,8 +65,6 @@ pub fn start(app: AppHandle) {
     spawn(app.clone(), "integration_n8n", 3, 15, poll_n8n);
     spawn(app.clone(), "integration_vercel", 5, 30, poll_vercel);
     spawn(app.clone(), "integration_stripe", 6, 30, poll_stripe);
-    spawn(app.clone(), "integration_resend", 6, 60, poll_resend);
-    spawn(app.clone(), "integration_github", 7, 300, poll_github);
     spawn(app.clone(), "integration_calcom", 8, 300, poll_calcom);
     spawn(app, "integration_notion", 9, 300, poll_notion);
 }
@@ -107,10 +105,8 @@ where
 pub async fn poll_once(app: AppHandle, id: &str) {
     match id {
         "integration_stripe" => poll_stripe(app).await,
-        "integration_github" => poll_github(app).await,
         "integration_vercel" => poll_vercel(app).await,
         "integration_n8n" => poll_n8n(app).await,
-        "integration_resend" => poll_resend(app).await,
         "integration_notion" => poll_notion(app).await,
         "integration_calcom" => poll_calcom(app).await,
         _ => {}
@@ -262,67 +258,6 @@ async fn poll_stripe(app: AppHandle) {
     });
 }
 
-// ── GitHub ────────────────────────────────────────────────────────────────────
-
-async fn poll_github(app: AppHandle) {
-    let Some(token) = secrets::get("github-token") else { return };
-    let http = client();
-
-    let user = http
-        .get("https://api.github.com/user")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "Coucou")
-        .send()
-        .await;
-    let Ok(response) = user else { return };
-    if !response.status().is_success() {
-        emit(&app, IntegrationUpdate {
-            id: "integration_github",
-            data: json!({}),
-            error: Some(status_error(response.status().as_u16(), "Token lacks the needed scope")),
-            event: None,
-        });
-        return;
-    }
-    let json: Value = response.json().await.unwrap_or(json!({}));
-    let public = json.get("public_repos").and_then(Value::as_i64).unwrap_or(0);
-    let private = json
-        .get("owned_private_repos")
-        .or_else(|| json.get("total_private_repos"))
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-
-    let repos = http
-        .get("https://api.github.com/user/repos?per_page=100&affiliation=owner&sort=pushed")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "Coucou")
-        .send()
-        .await;
-    let stars: i64 = match repos {
-        Ok(r) if r.status().is_success() => r
-            .json::<Value>()
-            .await
-            .ok()
-            .and_then(|v| v.as_array().cloned())
-            .map(|list| {
-                list.iter()
-                    .filter_map(|r| r.get("stargazers_count").and_then(Value::as_i64))
-                    .sum()
-            })
-            .unwrap_or(0),
-        _ => 0,
-    };
-
-    emit(&app, IntegrationUpdate {
-        id: "integration_github",
-        data: json!({ "totalRepos": public + private, "totalStars": stars }),
-        error: None,
-        event: None,
-    });
-}
-
 // ── Vercel ────────────────────────────────────────────────────────────────────
 
 async fn poll_vercel(app: AppHandle) {
@@ -392,63 +327,6 @@ async fn poll_vercel(app: AppHandle) {
         data: json!({ "deployments": deployments }),
         error: None,
         event,
-    });
-}
-
-// ── Resend ────────────────────────────────────────────────────────────────────
-
-async fn poll_resend(app: AppHandle) {
-    let Some(key) = secrets::get("resend-api-key") else { return };
-    let response = client()
-        .get("https://api.resend.com/emails?limit=100")
-        .header("Authorization", format!("Bearer {key}"))
-        .header("Accept", "application/json")
-        .send()
-        .await;
-    let Ok(response) = response else { return };
-    if !response.status().is_success() {
-        emit(&app, IntegrationUpdate {
-            id: "integration_resend",
-            data: json!({}),
-            error: Some(status_error(response.status().as_u16(), "Key lacks access")),
-            event: None,
-        });
-        return;
-    }
-    let json: Value = response.json().await.unwrap_or(json!({}));
-    let total = json
-        .get("total")
-        .or_else(|| json.get("count"))
-        .and_then(Value::as_i64);
-    let emails: Vec<Value> = json
-        .get("data")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .take(5)
-                .filter_map(|e| {
-                    let to = match e.get("to") {
-                        Some(Value::Array(a)) => a.clone(),
-                        Some(Value::String(s)) => vec![Value::String(s.clone())],
-                        _ => vec![],
-                    };
-                    Some(json!({
-                        "id": e.get("id")?.as_str()?,
-                        "to": to,
-                        "subject": e.get("subject").and_then(Value::as_str).unwrap_or(""),
-                        "createdAt": e.get("created_at").and_then(Value::as_str).unwrap_or(""),
-                        "lastEvent": e.get("last_event").and_then(Value::as_str).unwrap_or(""),
-                    }))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    emit(&app, IntegrationUpdate {
-        id: "integration_resend",
-        data: json!({ "emails": emails, "total": total }),
-        error: None,
-        event: None,
     });
 }
 
