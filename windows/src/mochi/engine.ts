@@ -63,9 +63,12 @@ interface Particle {
 }
 
 /** Confetti physics, in the same units as the other particles (R * 1.3 per unit). */
-const CONFETTI_GRAVITY = 1.8;
-const CONFETTI_DRAG = 2.5;
-const CONFETTI_COUNT = 36;
+const CONFETTI_GRAVITY = 2.2;
+const CONFETTI_DRAG = 1.1;
+/** Main burst, then a smaller second pop CONFETTI_POP2_DELAY seconds later. */
+const CONFETTI_COUNT = 42;
+const CONFETTI_POP2_COUNT = 20;
+const CONFETTI_POP2_DELAY = 0.45;
 const CONFETTI_EXTRA_COLORS = ["#FFD23F", "#4DD2FF", "#FF5D8F", "#7BE495"];
 
 // ── Constants (MochiConst / PISTES.mochi) ─────────────────────────────────────
@@ -574,17 +577,21 @@ export class BotEngine {
    */
   celebrate(color: string = MOCHI_TOP_HEX) {
     const palette = [color, color, ...CONFETTI_EXTRA_COLORS];
-    for (let i = 0; i < CONFETTI_COUNT; i++) {
+    for (let i = 0; i < CONFETTI_COUNT + CONFETTI_POP2_COUNT; i++) {
+      const second = i >= CONFETTI_COUNT;
+      // Fan out from straight up to ~70° either side; the second pop is a bit softer.
+      const ang = (Math.random() - 0.5) * 2.4;
+      const speed = (second ? 1.6 : 2.1) + Math.random() * 1.1;
       this.particles.push({
         type: "confetti",
-        x: (Math.random() - 0.5) * 0.6,
-        y: -0.45,
-        vx: (Math.random() - 0.5) * 2.2,
-        vy: -(0.9 + Math.random() * 0.9),
-        age: -Math.random() * 0.12,
-        life: 1.6 + Math.random() * 0.6,
+        x: (Math.random() - 0.5) * 0.5,
+        y: -0.5,
+        vx: Math.sin(ang) * speed * 1.4,
+        vy: -Math.cos(ang) * speed,
+        age: -(second ? CONFETTI_POP2_DELAY : 0) - Math.random() * 0.1,
+        life: 2.2 + Math.random() * 0.7,
         rot: Math.random() * Math.PI * 2,
-        size: 0.09 + Math.random() * 0.05,
+        size: 0.12 + Math.random() * 0.08,
         color: palette[Math.floor(Math.random() * palette.length)],
         phase: Math.random() * Math.PI * 2,
       });
@@ -1238,7 +1245,7 @@ export class BotEngine {
         const ph = p.phase ?? 0;
         const dx = p.vx * (1 - Math.exp(-CONFETTI_DRAG * p.age)) / CONFETTI_DRAG;
         const dy = p.vy * p.age + 0.5 * CONFETTI_GRAVITY * p.age * p.age;
-        px = cx + (p.x + dx + Math.sin(p.age * 7 + ph) * 0.05) * R * 1.3;
+        px = cx + (p.x + dx + Math.sin(p.age * 6 + ph) * 0.09) * R * 1.3;
         py = cy + (p.y + dy) * R * 1.3;
         x.translate(px, py);
         x.globalAlpha = k < 0.7 ? 1 : Math.min(1, Math.max(0, (1 - k) / 0.3));
