@@ -32,8 +32,50 @@ export interface AgentTask {
   updatedAt?: number | null;
   /** Last hook event of any kind for this session (ms), for expiring dead sessions. */
   lastEventAt?: number | null;
+  /** Subagents running for this session, in start order. */
+  subagents?: Subagent[];
+  /** Agent tool calls awaiting their SubagentStart (FIFO). */
+  pendingAgents?: PendingAgent[];
   /** Brand prop Mochi wears (headphones, calendar page). */
   accessory?: AccessoryKind | null;
+}
+
+/** A subagent a Claude session is running right now. Finished ones are removed. */
+export interface Subagent {
+  agentId: string;
+  /** subagent_type, or the agent_type from SubagentStart. */
+  type: string;
+  /** What the Agent tool call said it was for; the type when that was never seen. */
+  description: string;
+  /** Display label ("Sonnet", "Same as Claude"), or null to hide the model line. */
+  model: string | null;
+  startedAt: number;
+  /** Plain-English line for its latest tool call. */
+  lastActivity: string;
+  /** Last hook event of any kind from this subagent (ms). */
+  lastEventAt: number;
+}
+
+/** An Agent tool call seen on the parent, waiting for its SubagentStart. */
+export interface PendingAgent {
+  description: string;
+  type: string;
+  /** Raw `model` from tool_input, if any. */
+  model: string | null;
+  at: number;
+}
+
+/** A pending Agent call that never got its SubagentStart is dropped after this. */
+const PENDING_TTL_MS = 5 * 60 * 1000;
+/** A subagent silent for this long is assumed gone (its Stop never came). */
+export const SUBAGENT_TTL_MS = 30 * 60 * 1000;
+
+/** "inherit" and the general-purpose agent run on the parent's model. */
+export function modelLabel(raw: string | null | undefined, type: string): string | null {
+  const m = (raw ?? "").trim();
+  if (m === "inherit") return "Same as Claude";
+  if (m) return /^[a-z]+$/.test(m) ? m.charAt(0).toUpperCase() + m.slice(1) : m;
+  return type === "general-purpose" ? "Same as Claude" : null;
 }
 
 /** One plan limit, as Rust reports it (`claude-usage` event). */
@@ -177,6 +219,9 @@ class AppState {
   /** Direction of the last focus change, for the carousel slide (+1 = next agent). */
   focusDir: 1 | -1 = 1;
 
+  /** Subagent the island is drilled into (Claude panel), or null. */
+  drillAgentId: string | null = null;
+
   stateOverride: BotStateName | null = null;
 
   /** Cursor in logical screen pixels, origin top-left (like AppState.mousePosition). */
@@ -237,9 +282,84 @@ class AppState {
     // Which way the carousel slides: toward a later agent is "down" (+1).
     const from = this.tasks.findIndex((x) => x.id === this.focusTask?.id);
     this.focusDir = this.tasks.indexOf(t) >= from ? 1 : -1;
+    // Moving to another entry leaves the subagent view at once.
+    if (id !== this.focusId) this.drillAgentId = null;
     this.focusId = id;
     t.pillBadge = null;
     this.notify();
+  }
+
+  // ── Subagents ──────────────────────────────────────────────────────────────
+
+  /** An Agent/Task tool call on the parent: remember it until SubagentStart. */
+  queueAgent(taskId: string, p: { description: string; type: string; model: string | null }) {
+    const t = this.tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    const now = Date.now();
+    const q = (t.pendingAgents ??= []).filter((x) => now - x.at < PENDING_TTL_MS);
+    q.push({ ...p, at: now });
+    t.pendingAgents = q.slice(-20);
+  }
+
+  /**
+   * SubagentStart: claim the first pending call of the same type (else the first
+   * pending one, else fall back to the type as the description). Returns the new
+   * subagent so the caller can resolve its model.
+   */
+  startSubagent(taskId: string, agentId: string, type: string): Subagent | null {
+    const t = this.tasks.find((x) => x.id === taskId);
+    if (!t || !agentId) return null;
+    const subs = (t.subagents ??= []);
+    const known = subs.find((x) => x.agentId === agentId);
+    if (known) return known;
+    const now = Date.now();
+    const q = (t.pendingAgents ??= []).filter((x) => now - x.at < PENDING_TTL_MS);
+    let at = q.findIndex((x) => x.type === type);
+    if (at < 0) at = q.length > 0 ? 0 : -1;
+    const pending = at >= 0 ? q.splice(at, 1)[0] : null;
+    t.pendingAgents = q;
+    const kind = type || pending?.type || "agent";
+    const sub: Subagent = {
+      agentId, type: kind,
+      description: pending?.description || kind,
+      model: modelLabel(pending?.model, kind),
+      startedAt: now, lastActivity: "Starting…", lastEventAt: now,
+    };
+    subs.push(sub);
+    this.notify();
+    return sub;
+  }
+
+  /** A tool event from a subagent: it never touches the parent's own line. */
+  touchSubagent(taskId: string, agentId: string, activity?: string) {
+    const sub = this.tasks.find((x) => x.id === taskId)?.subagents?.find((x) => x.agentId === agentId);
+    if (!sub) return;
+    sub.lastEventAt = Date.now();
+    if (activity) sub.lastActivity = activity;
+    this.notify();
+  }
+
+  stopSubagent(taskId: string, agentId: string) {
+    const t = this.tasks.find((x) => x.id === taskId);
+    if (!t?.subagents) return;
+    const n = t.subagents.length;
+    t.subagents = t.subagents.filter((x) => x.agentId !== agentId);
+    if (t.subagents.length !== n) this.notify();
+  }
+
+  /** Drops subagents silent for `ttlMs`; true when any were dropped. */
+  expireSubagents(now: number, ttlMs = SUBAGENT_TTL_MS): boolean {
+    let any = false;
+    for (const t of this.tasks) {
+      if (!t.subagents?.length) continue;
+      const keep = t.subagents.filter((x) => now - x.lastEventAt < ttlMs);
+      if (keep.length !== t.subagents.length) {
+        t.subagents = keep;
+        any = true;
+      }
+    }
+    if (any) this.notify();
+    return any;
   }
 
   updateTask(id: string, state: BotStateName) {
@@ -296,6 +416,7 @@ class AppState {
     const idx = this.tasks.findIndex((t) => t.id === id);
     if (idx < 0) return;
     this.tasks.splice(idx, 1);
+    if (this.focusId === id) this.drillAgentId = null;
     if (this.focusId === id) this.focusId = this.tasks[0]?.id ?? "integration_claude";
     this.notify();
   }
@@ -385,6 +506,8 @@ class AppState {
       main.updatedAt = next.updatedAt;
       main.lastEventAt = next.lastEventAt;
       main.pillBadge = next.pillBadge;
+      main.subagents = next.subagents;
+      main.pendingAgents = next.pendingAgents;
       const hadFocus = this.focusId === next.id;
       this.removeTask(next.id);
       if (hadFocus) this.focusId = main.id;
@@ -393,6 +516,8 @@ class AppState {
       main.steps = [];
       main.stepIndex = 0;
       main.pillBadge = null;
+      main.subagents = [];
+      main.pendingAgents = [];
       main.sessionId = null;
       main.sessionCwd = null;
       main.project = null;

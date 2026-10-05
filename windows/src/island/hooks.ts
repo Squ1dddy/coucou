@@ -6,7 +6,7 @@
 import { describeActivity } from "../core/activity";
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State, staleClaudeSessions, type ClaudeUsage } from "../core/state";
+import { State, modelLabel, staleClaudeSessions, type ClaudeUsage } from "../core/state";
 import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
@@ -24,6 +24,9 @@ interface HookPayload {
   prompt?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
+  /** Set on a subagent's own events (and SubagentStart/Stop). */
+  agent_id?: string;
+  agent_type?: string;
   /** Optional agent tag: lowercase, digits and hyphens, ≤ 24 chars. */
   coucou_agent?: string;
 }
@@ -123,7 +126,10 @@ function expireStaleSessions(except = "") {
 export function registerHookHandlers(island: Island) {
   window.setInterval(() => {
     // Nothing to expire or redraw while the island is hidden; the next event re-checks.
-    if (State.mode !== "hidden") expireStaleSessions();
+    if (State.mode !== "hidden") {
+      expireStaleSessions();
+      State.expireSubagents(Date.now());
+    }
   }, 60_000);
 
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
@@ -132,6 +138,27 @@ export function registerHookHandlers(island: Island) {
     State.claudeUsage = usage;
     State.notify();
   });
+}
+
+/**
+ * No model on the Agent call: read the agent definition's frontmatter. Built-ins,
+ * plugin agents and anything not found stay null, so the model line is hidden.
+ */
+async function resolveSubagentModel(
+  taskId: string, agentId: string, type: string, current: string | null, cwd: string,
+) {
+  if (current || !type) return;
+  let raw: string | null = null;
+  try {
+    raw = await Bridge.agentModel(cwd || null, type);
+  } catch {
+    return;
+  }
+  const label = modelLabel(raw, type);
+  const sub = State.tasks.find((t) => t.id === taskId)?.subagents?.find((s) => s.agentId === agentId);
+  if (!sub || !label || sub.model === label) return;
+  sub.model = label;
+  State.notify();
 }
 
 function handleHook(island: Island, payload: HookPayload) {
@@ -224,6 +251,24 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "PreToolUse": {
+      // A parent (or subagent) spawning an agent: its description and model are
+      // only known here, SubagentStart carries neither.
+      if (!isExternalAgent && (payload.tool_name === "Agent" || payload.tool_name === "Task")) {
+        const input = payload.tool_input ?? {};
+        const text = (k: string) => (typeof input[k] === "string" ? (input[k] as string).trim() : "");
+        State.queueAgent(agentId, {
+          description: text("description").slice(0, 80) || text("subagent_type"),
+          type: text("subagent_type"),
+          model: text("model") || null,
+        });
+      }
+      // A subagent's own tool call: it updates that subagent, never the parent.
+      if (!isExternalAgent && payload.agent_id) {
+        State.touchSubagent(
+          agentId, payload.agent_id, describeActivity(payload.tool_name ?? "Tool", payload.tool_input ?? {}),
+        );
+        break;
+      }
       ensurePill();
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
@@ -233,10 +278,18 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "PostToolUse":
+      if (!isExternalAgent && payload.agent_id) {
+        State.touchSubagent(agentId, payload.agent_id);
+        break;
+      }
       State.updateTask(agentId, "working");
       break;
 
     case "PostToolUseFailure":
+      if (!isExternalAgent && payload.agent_id) {
+        State.touchSubagent(agentId, payload.agent_id);
+        break;
+      }
       State.updateTask(agentId, "working");
       State.appendStep(agentId, "⚠ failed");
       break;
@@ -282,12 +335,15 @@ function handleHook(island: Island, payload: HookPayload) {
       State.removeTask(agentId);
       break;
 
-    case "SubagentStart":
-      State.appendStep(agentId, "+ subagent");
+    case "SubagentStart": {
+      if (isExternalAgent || !payload.agent_id) break;
+      const sub = State.startSubagent(agentId, payload.agent_id, payload.agent_type ?? "");
+      if (sub) void resolveSubagentModel(agentId, sub.agentId, sub.type, sub.model, cwd);
       break;
+    }
 
     case "SubagentStop":
-      State.appendStep(agentId, "• subagent done");
+      if (!isExternalAgent && payload.agent_id) State.stopSubagent(agentId, payload.agent_id);
       break;
 
     case "PermissionRequest": {

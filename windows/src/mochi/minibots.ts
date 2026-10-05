@@ -3,6 +3,7 @@
 
 import { BotEngine, hexToRGB } from "./engine";
 import type { AgentTask } from "../core/state";
+import type { BotEmoteName } from "../core/layout";
 
 interface MiniBot {
   canvas: HTMLCanvasElement;
@@ -51,6 +52,17 @@ export function createMiniBot(task: AgentTask, bodySize: number): HTMLElement {
 
   live.set(canvas, { canvas, engine, cssSize: engineSize, taskId: task.id });
   return slot;
+}
+
+/** True while this canvas is still ticked (pruning drops detached ones). */
+export function miniBotLive(canvas: HTMLCanvasElement | null | undefined): boolean {
+  return !!canvas && live.has(canvas);
+}
+
+/** A short emote on the mini Mochi inside `slot` (the element createMiniBot returned). */
+export function emoteMiniBot(slot: HTMLElement, emote: BotEmoteName, duration = 1.8) {
+  const canvas = slot.querySelector("canvas");
+  if (canvas) live.get(canvas)?.engine.triggerEmote(emote, duration);
 }
 
 export function releaseMiniBot(canvas: HTMLCanvasElement) {

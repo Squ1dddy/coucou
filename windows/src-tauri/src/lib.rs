@@ -1,5 +1,6 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod agents;
 mod claude;
 mod files;
 mod hooks;
@@ -136,6 +137,12 @@ fn open_url(url: String) {
         return;
     }
     platform::open_url(&url);
+}
+
+/// Model named by a subagent's definition file, if any (read-only, frontmatter only).
+#[tauri::command]
+fn agent_model(cwd: Option<String>, agent_type: String) -> Option<String> {
+    agents::lookup_model(cwd.as_deref(), &agent_type)
 }
 
 /// "Open Claude" brings the Claude desktop app forward, launching it through its
@@ -427,6 +434,7 @@ pub fn run() {
             reposition,
             open_url,
             open_session,
+            agent_model,
             quit_app,
             hooks_status,
             hooks_preview,

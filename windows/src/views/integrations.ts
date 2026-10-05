@@ -683,6 +683,10 @@ export interface IntegrationCardHooks {
   openDetail(): void;
   closeDetail(): void;
   openSettings(): void;
+  /** Claude panel: open a running subagent from its mini Mochi (`slot` flies to the stage). */
+  drillIn(agentId: string, slot: HTMLElement): void;
+  /** Subagent view: back to the session panel. */
+  drillOut(): void;
 }
 
 /** True when this integration has data worth showing instead of the idle card. */
@@ -708,7 +712,7 @@ export function hasIntegrationData(id: string): boolean {
 
 export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHooks): HTMLElement {
   setLive(null, null); // only the Spotify and calendar cards register a timer below
-  if (task.source === "claudeCode") return renderClaudePanel(task);
+  if (task.source === "claudeCode") return renderClaudePanel(task, hooks);
   if (task.id === "integration_n8n") {
     const hasActivity = task.steps.length > 0 && (task.state === "finished" || task.state === "error");
     return hooks.detailOpen && hasActivity

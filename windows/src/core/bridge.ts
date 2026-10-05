@@ -55,6 +55,10 @@ export const Bridge = {
   /** "Open Claude" → the Claude desktop app; VS Code with the folder where there is none. */
   openSession: (path: string | null) => call<boolean>("open_session", { path }),
 
+  /** Model named by a subagent's definition file (`.claude/agents/<type>.md`), or null. */
+  agentModel: (cwd: string | null, agentType: string) =>
+    call<string | null>("agent_model", { cwd, agentType }),
+
   quit: () => call<void>("quit_app"),
 
   openSettingsWindow: () => call<void>("open_settings_window"),

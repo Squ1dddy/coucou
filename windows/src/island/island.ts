@@ -14,17 +14,20 @@ import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
-import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
+import { createMiniBot, emoteMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
-import { h } from "../views/dom";
+import { h, svg } from "../views/dom";
+import { ICONS } from "../views/icons";
 import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
 /** Carousel slide: how far (px) the bot travels, and the end-of-list nudge. */
 const SLIDE_D = 56;
 const BUMP_PX = 6;
+/** How long the done tick shows on a finished subagent before the panel backs out. */
+const DONE_TICK_MS = 600;
 /** Stage column in island coordinates (content padding 10, header 34 + 8). */
 const STAGE = { left: 10, top: 42, w: 150, bottomInset: 10 };
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -71,6 +74,19 @@ export class Island {
   private sliding = false;
   /** Rubber-band nudge (px) at the first / last agent. */
   private bump = new Spring(0, 0.3, 0.4);
+  /**
+   * Subagent drill-in: 0 = session view (the parent's Mochi on the stage), 1 = the
+   * subagent's Mochi on the stage. Same spring as the carousel slide.
+   */
+  private fly = new Spring(0, 0.42, 0.9);
+  private flyer: { el: HTMLElement; agentId: string } | null = null;
+  /** The clicked mini Mochi's centre and body size, island coordinates. */
+  private flyFrom = { cx: 0, cy: 0, size: 20 };
+  /** Subagent id the island last reacted to. */
+  private drillId: string | null = null;
+  /** The next exit glides back; every other exit (focus change, takeover) is instant. */
+  private animatedExit = false;
+  private finishingAt: number | null = null;
   private lastFocusId: string | null = null;
   private slideDirty = false;
 
@@ -131,6 +147,8 @@ export class Island {
         Sound.play("blip");
       },
       stepFocus: (dir) => this.stepFocus(dir),
+      drillIn: (id, slot) => this.drillIn(id, slot),
+      drillOut: () => this.drillOut(),
       openClaude: () => {
         void Bridge.openSession(State.focusTask?.sessionCwd ?? null);
         this.collapse();
@@ -714,13 +732,21 @@ export class Island {
       this.syncDom();
     }
 
+    this.syncDrill(nowMs);
     this.updateBotTargets();
     this.botCx.step(dt);
     this.botCy.step(dt);
     this.botSize.step(dt);
     this.slide.step(dt);
     this.bump.step(dt);
+    this.fly.step(dt);
+    if (this.fly.settled && this.fly.value !== this.fly.target) {
+      this.fly.value = this.fly.target;
+      this.fly.velocity = 0;
+      this.slideDirty = true;
+    }
     this.applySlide();
+    this.applyFlyer();
 
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
     if (greetingActive) {
@@ -765,6 +791,7 @@ export class Island {
       : settling ||
         !this.botCx.settled || !this.botCy.settled || !this.botSize.settled ||
         this.sliding || !this.bump.settled ||
+        !this.fly.settled || this.finishingAt != null || this.minisRunning() ||
         greetingActive || this.engine.busy || UploadSeq.isActive;
 
     if (busy) {
@@ -779,6 +806,11 @@ export class Island {
 
   /** Wheel notch: next / previous agent, or a small bounce at either end. */
   private stepFocus(dir: Dir) {
+    // In a subagent view the wheel backs out first; it never switches agent on that notch.
+    if (State.drillAgentId) {
+      this.drillOut();
+      return;
+    }
     const cur = State.tasks.findIndex((t) => t.id === State.focusTask?.id);
     const r = stepIndex(cur, dir, State.tasks.length);
     if (r.bounce) {
@@ -833,13 +865,16 @@ export class Island {
       this.slide.set(1);
     }
     const bumping = !this.bump.settled;
-    if (!this.sliding && !bumping && !this.slideDirty) return;
+    const flying = !this.fly.settled || this.fly.value !== 0;
+    if (!this.sliding && !bumping && !this.slideDirty && !flying) return;
+    // The parent's Mochi glides up and out while a subagent's takes the stage.
+    const flyDy = -clamp(this.fly.value, 0, 1.2) * SLIDE_D;
 
     const live = this.botCanvas.style;
     const glow = this.botGlow.style;
     if (this.sliding) {
       const p = this.slide.value;
-      const dy = (1 - p) * this.slideDir * SLIDE_D + this.bump.value;
+      const dy = (1 - p) * this.slideDir * SLIDE_D + this.bump.value + flyDy;
       live.transform = glow.transform = `translateY(${dy}px)`;
       this.snapCanvas.style.transform = `translateY(${-p * this.slideDir * SLIDE_D}px)`;
       this.snapCanvas.style.opacity = String(clamp(1 - p * 1.4, 0, 1));
@@ -847,13 +882,150 @@ export class Island {
       const right = this.width.value - STAGE.left - STAGE.w;
       this.botLayer.style.clipPath = `inset(${STAGE.top}px ${right}px ${STAGE.bottomInset}px ${STAGE.left}px round 20px)`;
     } else {
-      const dy = overview ? this.bump.value : 0;
+      const dy = (overview ? this.bump.value : 0) + flyDy;
       live.transform = glow.transform = dy ? `translateY(${dy}px)` : "";
       this.snapCanvas.style.display = "none";
       this.botLayer.style.clipPath = "";
       if (!bumping) this.bump.set(0);
     }
     this.slideDirty = false;
+  }
+
+  // ── Subagent drill-in ───────────────────────────────────────────────────────
+
+  /** The row's mini Mochis (or the flyer) are on screen and must keep animating. */
+  private minisRunning(): boolean {
+    if (State.mode !== "expanded" || State.view !== "overview") return false;
+    return this.flyer != null || (State.focusTask?.subagents?.length ?? 0) > 0;
+  }
+
+  /** Click on a mini Mochi: it grows and glides to the stage while the panel slides. */
+  private drillIn(agentId: string, slot: HTMLElement) {
+    if (State.drillAgentId) return;
+    const r = slot.getBoundingClientRect();
+    const ir = this.islandEl.getBoundingClientRect();
+    this.flyFrom = { cx: r.left + r.width / 2 - ir.left, cy: r.top + r.height / 2 - ir.top, size: r.width };
+    this.flyer = { el: h("div", { id: "bot-flyer" }), agentId };
+    // Hidden now, so the panel's outgoing copy does not show it twice.
+    slot.style.visibility = "hidden";
+    this.animatedExit = false;
+    State.drillAgentId = agentId;
+    Sound.play("blip");
+    State.notify();
+  }
+
+  /** Back arrow, wheel over the stage, or the end of the done tick. */
+  private drillOut() {
+    if (!State.drillAgentId) return;
+    this.animatedExit = true;
+    State.drillAgentId = null;
+    Sound.play("blip");
+    State.notify();
+  }
+
+  /** The mini Mochi of this subagent in the row, when the row is on screen. */
+  private rowSlot(agentId: string): HTMLElement | null {
+    return this.islandEl.querySelector<HTMLElement>(`.cl-sub[data-agent="${agentId}"] .mini`);
+  }
+
+  private clearFlyer() {
+    if (this.flyer) {
+      const slot = this.rowSlot(this.flyer.agentId);
+      if (slot) slot.style.visibility = "";
+      this.flyer.el.remove();
+    }
+    this.flyer = null;
+    this.slideDirty = true;
+  }
+
+  /**
+   * Follows State.drillAgentId (set by the click, the back arrow, a focus change...).
+   * Leaving for any reason but the back arrow / finish is instant.
+   */
+  private syncDrill(nowMs: number) {
+    // A takeover (approval, question), a collapse or another screen ends the view at once.
+    if (State.drillAgentId && (State.mode !== "expanded" || State.view !== "overview")) {
+      State.drillAgentId = null;
+      this.animatedExit = false;
+    }
+    const id = State.drillAgentId;
+    const task = State.focusTask;
+    const sub = task?.subagents?.find((x) => x.agentId === id) ?? null;
+
+    if (id !== this.drillId) {
+      this.drillId = id;
+      this.finishingAt = null;
+      if (id && this.flyer) {
+        // Entering: the flyer is a body-size Mochi scaled down to the mini, so it stays sharp when it grows.
+        const bodyD = VIEW_LAYOUTS.overview.botDiameter;
+        const fl = this.flyer;
+        fl.el.replaceChildren(
+          createMiniBot(
+            { id: `fly_${id}`, name: "", color: task?.color ?? "#D97757", state: "working",
+              stepIndex: 0, steps: [], source: "claudeCode", isIntegration: false },
+            bodyD,
+          ),
+        );
+        this.botLayer.append(fl.el);
+        this.fly.target = 1;
+      } else if (id) {
+        State.drillAgentId = null; // not a click we know how to animate
+        this.drillId = null;
+      } else if (this.animatedExit && this.flyer) {
+        this.fly.target = 0;
+      } else {
+        this.fly.set(0);
+        this.clearFlyer();
+      }
+      this.animatedExit = false;
+    }
+
+    // The viewed subagent finished: brief done tick, then glide back out.
+    if (id && !sub && this.flyer && this.finishingAt == null) {
+      this.finishingAt = nowMs + DONE_TICK_MS;
+      const mini = this.flyer.el.firstElementChild as HTMLElement | null;
+      if (mini) emoteMiniBot(mini, "happy", 1.2);
+      this.flyer.el.append(h("span", { class: "fly-tick" }, svg(ICONS.check, 12, { stroke: 3 })));
+      Sound.play("approve");
+      State.notify(); // the panel and name switch to the finished view
+    }
+    if (this.finishingAt != null && nowMs >= this.finishingAt) {
+      this.finishingAt = null;
+      this.drillOut();
+    }
+
+    // Glide finished (back at the row): the flyer has done its job.
+    if (!id && this.flyer && this.fly.settled && this.fly.target === 0) this.clearFlyer();
+  }
+
+  /** Places the flyer between the mini Mochi's spot (0) and the stage (1). */
+  private applyFlyer() {
+    const fl = this.flyer;
+    if (!fl) return;
+    const bodyD = VIEW_LAYOUTS.overview.botDiameter;
+    const p = this.fly.value;
+    // Back out: aim at the mini's live spot (the panel is still sliding in); when it
+    // is gone (the subagent finished), shrink and fade at the old spot instead.
+    let from = this.flyFrom;
+    let present = 1;
+    const slot = this.rowSlot(fl.agentId);
+    if (slot) {
+      if (!State.drillAgentId) slot.style.visibility = "hidden";
+      const r = slot.getBoundingClientRect();
+      const ir = this.islandEl.getBoundingClientRect();
+      if (r.width > 0) {
+        from = { cx: r.left + r.width / 2 - ir.left, cy: r.top + r.height / 2 - ir.top, size: r.width };
+        this.flyFrom = from;
+      }
+    } else if (!State.drillAgentId) {
+      present = clamp(p * 1.5, 0, 1);
+    }
+    const cx = from.cx + (this.botCx.value - from.cx) * p;
+    const cy = from.cy + (this.botCy.value - from.cy) * p;
+    const size = from.size + (bodyD - from.size) * p;
+    const st = fl.el.style;
+    st.transform = `translate(${cx - bodyD / 2}px, ${cy - bodyD / 2}px) scale(${Math.max(0.05, size / bodyD)})`;
+    st.opacity = String(present);
   }
 
   private updateBotTargets() {
@@ -865,7 +1037,11 @@ export class Island {
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
     // The drop canvas draws its own Mochi; two of them would overlap.
     const visible = p.opacity > 0 && !greetingActive && !this.uploadActive;
-    this.botCanvas.style.opacity = visible ? (this.sliding ? String(clamp(this.slide.value, 0, 1)) : "1") : "0";
+    // The parent's Mochi leaves as the subagent's arrives (fly 0 -> 1).
+    const away = clamp(1 - this.fly.value * 1.4, 0, 1);
+    this.botCanvas.style.opacity = visible
+      ? String((this.sliding ? clamp(this.slide.value, 0, 1) : 1) * away)
+      : "0";
 
     if (State.mode === "expanded" && State.view !== "uploading" && !greetingActive && !this.uploadActive) {
       const d = p.diameter;
@@ -876,7 +1052,7 @@ export class Island {
       this.botGlow.style.left = `${this.botCx.value - d * 1.1}px`;
       this.botGlow.style.top = `${this.botCy.value - d * 1.1}px`;
       this.botGlow.style.background = `radial-gradient(circle, ${color} 0%, transparent 62%)`;
-      this.botGlow.style.opacity = String(botGlowOpacity(State.effectiveState));
+      this.botGlow.style.opacity = String(botGlowOpacity(State.effectiveState) * away);
     } else {
       this.botGlow.style.display = "none";
     }
@@ -992,6 +1168,8 @@ export class Island {
       }
     }
 
+    // Rebuilt panels leave their old mini Mochis behind; stop ticking those.
+    pruneMiniBots();
     syncMiniBotStates(State.tasks);
     this.engine.setState(State.effectiveState);
   }

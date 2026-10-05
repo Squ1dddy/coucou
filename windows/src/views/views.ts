@@ -7,6 +7,7 @@ import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { WheelStepper } from "../core/carousel";
+import { viewedSubagent } from "./claude";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import {
@@ -27,6 +28,10 @@ export interface ViewActions {
   /** The ↗ button: opens whatever the focused pill points at. */
   openTarget(): void;
   openUrl(url: string): void;
+  /** Claude panel: fly a subagent's mini Mochi to the stage and show its view. */
+  drillIn(agentId: string, slot: HTMLElement): void;
+  /** Leave the subagent view (the reverse flight). */
+  drillOut(): void;
   decide(d: "allow" | "deny"): void;
   toggleSound(): void;
   setVolume(v: number): void;
@@ -160,6 +165,15 @@ function crossSlide(host: HTMLElement, body: HTMLElement, ghost: HTMLElement | n
   );
 }
 
+/** A deep copy that keeps what canvases were showing (cloneNode leaves them blank). */
+function cloneWithCanvases(el: HTMLElement): HTMLElement {
+  const copy = el.cloneNode(true) as HTMLElement;
+  const from = el.querySelectorAll("canvas");
+  const to = copy.querySelectorAll("canvas");
+  from.forEach((c, i) => to[i]?.getContext("2d")?.drawImage(c, 0, 0));
+  return copy;
+}
+
 function buildOverview(actions: ViewActions): ViewHost {
   const detailBody = h("div", { class: "detail-body" });
   const jump = h(
@@ -219,7 +233,10 @@ function buildOverview(actions: ViewActions): ViewHost {
       State.notify();
     },
     openSettings: () => actions.openSettingsWindow(),
+    drillIn: (id, slot) => actions.drillIn(id, slot),
+    drillOut: () => actions.drillOut(),
   };
+  let lastDrill: string | null = null;
 
   return {
     el,
@@ -231,9 +248,16 @@ function buildOverview(actions: ViewActions): ViewHost {
       let ghostBody: HTMLElement | null = null;
       let ghostName: HTMLElement | null = null;
       const changed = task?.id !== lastFocus;
-      if (changed) {
+      // Opening / closing a subagent view slides the panel like a carousel step
+      // (in = next, out = previous); a focus change wins and exits it instantly.
+      const drillId = State.drillAgentId;
+      const drillChanged = !changed && drillId !== lastDrill;
+      const slideDir: 1 | -1 = changed ? State.focusDir : drillId ? 1 : -1;
+      lastDrill = drillId;
+      if (drillChanged) cardKey = "";
+      if (changed || drillChanged) {
         if (shown && lastFocus != null) {
-          ghostBody = detailBody.cloneNode(true) as HTMLElement;
+          ghostBody = cloneWithCanvases(detailBody);
           ghostName = nameEl.cloneNode(true) as HTMLElement;
         }
         lastFocus = task?.id ?? null;
@@ -242,7 +266,12 @@ function buildOverview(actions: ViewActions): ViewHost {
       }
 
       clear(nameEl);
-      if (task) {
+      const viewing = task ? viewedSubagent(task)?.sub : null;
+      if (viewing) {
+        // Drilled in: the Mochi on the stage is the subagent, named for its job.
+        nameEl.append(h("span", { class: "stage-name-main", text: viewing.description }));
+        nameEl.append(h("span", { class: "stage-name-sub", text: viewing.type }));
+      } else if (task) {
         nameEl.append(h("span", { class: "stage-name-main", text: task.name }));
         if (task.project) nameEl.append(h("span", { class: "stage-name-sub", text: task.project }));
       }
@@ -257,7 +286,11 @@ function buildOverview(actions: ViewActions): ViewHost {
           JSON.stringify(info?.data ?? {}), integrationCardSalt(task.id),
           // The Claude panel also shows limits and "N min" text that move on their own.
           task.source === "claudeCode"
-            ? [task.promptAt, task.updatedAt, task.project, JSON.stringify(State.claudeUsage), Math.floor(Date.now() / 30_000)].join("^")
+            ? [
+                task.promptAt, task.updatedAt, task.project, JSON.stringify(State.claudeUsage),
+                Math.floor(Date.now() / 30_000), drillId,
+                (task.subagents ?? []).map((x) => `${x.agentId}/${x.model}/${drillId === x.agentId ? x.lastActivity : ""}`).join(","),
+              ].join("^")
             : "",
         ].join("~");
         // A poll must not rebuild the volume slider under the user's finger.
@@ -301,9 +334,9 @@ function buildOverview(actions: ViewActions): ViewHost {
         }
       }
 
-      if (changed && shown && ghostBody && ghostName) {
-        crossSlide(detail, detailBody, ghostBody, State.focusDir);
-        crossSlide(stage, nameEl, ghostName, State.focusDir);
+      if ((changed || drillChanged) && shown && ghostBody && ghostName) {
+        crossSlide(detail, detailBody, ghostBody, slideDir);
+        crossSlide(stage, nameEl, ghostName, slideDir);
       }
       shown = true;
     },
