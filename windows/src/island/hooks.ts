@@ -259,12 +259,9 @@ function handleHook(island: Island, payload: HookPayload) {
         State.updateTask(CLAUDE_ID, "question");
         State.appendStep(CLAUDE_ID, count > 1 ? `Claude has ${count} questions for you` : "Claude has a question for you");
         Sound.play("question");
-        if (focused) {
-          island.alert("question");
-        } else {
-          State.setPillBadge(CLAUDE_ID, "approval");
-          island.reveal();
-        }
+        // No pills to click any more: the question takes the carousel over.
+        State.setFocus(CLAUDE_ID);
+        island.alert("question");
         break;
       }
 
@@ -292,15 +289,10 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(CLAUDE_ID, "approval");
       State.isPinned = true;
       Sound.play("approval");
-      if (focused) {
-        island.alert("approval");
-      } else {
-        // Another agent holds the view, so the card would yank it away. The badge
-        // is the signal instead — but it has to be on screen for that to mean
-        // anything, hence the reveal. We just told the relay a human can act.
-        State.setPillBadge(CLAUDE_ID, "approval");
-        island.reveal();
-      }
+      // No pills to click any more: the card takes the carousel over, and Claude
+      // stays focused once the view returns to the overview.
+      State.setFocus(CLAUDE_ID);
+      island.alert("approval");
       // Coucou answers within 108 s or not at all; after that the terminal has
       // taken over and the card would be lying.
       pendingTimeout = window.setTimeout(() => {

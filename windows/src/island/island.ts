@@ -2,6 +2,7 @@
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
 import { Tracked, Spring, clamp } from "../core/anim";
+import { stepIndex, type Dir } from "../core/carousel";
 import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
@@ -21,6 +22,11 @@ import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
+/** Carousel slide: how far (px) the bot travels, and the end-of-list nudge. */
+const SLIDE_D = 56;
+const BUMP_PX = 6;
+/** Stage column in island coordinates (content padding 10, header 34 + 8). */
+const STAGE = { left: 10, top: 42, w: 150, bottomInset: 10 };
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
 
@@ -42,6 +48,8 @@ export class Island {
   private viewsEl!: HTMLElement;
   private botCanvas!: HTMLCanvasElement;
   private botGlow!: HTMLElement;
+  private botLayer!: HTMLElement;
+  private snapCanvas!: HTMLCanvasElement;
   private greetingCanvas!: HTMLCanvasElement;
   private miniGrid!: HTMLElement;
   private countdown!: HTMLElement;
@@ -57,6 +65,14 @@ export class Island {
   private botCx = new Spring(46);
   private botCy = new Spring(16);
   private botSize = new Spring(10);
+  /** Carousel slide progress 0 -> 1 (the live bot arrives, the snapshot leaves). */
+  private slide = new Spring(1, 0.42, 0.9);
+  private slideDir: Dir = 1;
+  private sliding = false;
+  /** Rubber-band nudge (px) at the first / last agent. */
+  private bump = new Spring(0, 0.3, 0.4);
+  private lastFocusId: string | null = null;
+  private slideDirty = false;
 
   private engine = new BotEngine();
   private greeting = new Greeting();
@@ -99,6 +115,7 @@ export class Island {
     this.greeting.onComplete = () => this.fsm.greetComplete();
     State.subscribe(() => {
       this.dirty = true;
+      this.noteFocus();
       this.ensureRunning();
     });
   }
@@ -113,6 +130,7 @@ export class Island {
         State.setFocus(id);
         Sound.play("blip");
       },
+      stepFocus: (dir) => this.stepFocus(dir),
       openClaude: () => {
         void Bridge.openSession(State.focusTask?.sessionCwd ?? null);
         this.collapse();
@@ -172,6 +190,9 @@ export class Island {
     this.wakeStrip = h("div", { id: "wake-strip" });
     this.botGlow = h("div", { id: "bot-glow" });
     this.botCanvas = h("canvas", { id: "bot-canvas" });
+    this.snapCanvas = h("canvas", { id: "bot-snapshot" });
+    this.snapCanvas.style.display = "none";
+    this.botLayer = h("div", { id: "bot-layer" }, this.botGlow, this.snapCanvas, this.botCanvas);
     this.greetingCanvas = h("canvas", { id: "greeting-canvas" });
     this.miniGrid = h("div", { id: "mini-grid" });
     this.countdown = h("div", { id: "countdown" });
@@ -205,8 +226,7 @@ export class Island {
       "div",
       { id: "island" },
       this.clipEl,
-      this.botGlow,
-      this.botCanvas,
+      this.botLayer,
       this.miniGrid,
       this.countdown,
     );
@@ -696,6 +716,9 @@ export class Island {
     this.botCx.step(dt);
     this.botCy.step(dt);
     this.botSize.step(dt);
+    this.slide.step(dt);
+    this.bump.step(dt);
+    this.applySlide();
 
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
     if (greetingActive) {
@@ -739,6 +762,7 @@ export class Island {
       ? settling
       : settling ||
         !this.botCx.settled || !this.botCy.settled || !this.botSize.settled ||
+        this.sliding || !this.bump.settled ||
         greetingActive || this.engine.busy || UploadSeq.isActive;
 
     if (busy) {
@@ -749,6 +773,87 @@ export class Island {
     }
   };
 
+  // ── Carousel ────────────────────────────────────────────────────────────────
+
+  /** Wheel notch: next / previous agent, or a small bounce at either end. */
+  private stepFocus(dir: Dir) {
+    const cur = State.tasks.findIndex((t) => t.id === State.focusTask?.id);
+    const r = stepIndex(cur, dir, State.tasks.length);
+    if (r.bounce) {
+      this.bump.value = -dir * BUMP_PX;
+      this.bump.target = 0;
+      this.bump.velocity = 0;
+      this.ensureRunning();
+      return;
+    }
+    State.setFocus(State.tasks[r.index].id);
+    Sound.play("blip");
+  }
+
+  /**
+   * Runs on every State change, before the next frame redraws the bot: when the
+   * focus moved while the overview is on screen, the canvas still holds the old
+   * agent's last frame, so it becomes the outgoing snapshot.
+   */
+  private noteFocus() {
+    const id = State.focusTask?.id ?? null;
+    if (id === this.lastFocusId) return;
+    const prev = this.lastFocusId;
+    this.lastFocusId = id;
+    if (prev == null || id == null) return;
+    if (State.mode !== "expanded" || State.view !== "overview" || this.uploadActive) return;
+
+    const src = this.botCanvas;
+    const snap = this.snapCanvas;
+    snap.width = src.width;
+    snap.height = src.height;
+    snap.style.width = src.style.width;
+    snap.style.height = src.style.height;
+    snap.style.left = src.style.left;
+    snap.style.top = src.style.top;
+    snap.getContext("2d")?.drawImage(src, 0, 0);
+    snap.style.display = "block";
+
+    this.slideDir = State.focusDir;
+    this.slide.value = 0;
+    this.slide.target = 1;
+    this.slide.velocity = 0;
+    this.sliding = true;
+    this.slideDirty = true;
+  }
+
+  /** Applies the slide / bounce offsets to the bot layer; cleans up when settled. */
+  private applySlide() {
+    const overview = State.mode === "expanded" && State.view === "overview";
+    if (this.sliding && (!overview || this.slide.settled)) {
+      this.sliding = false;
+      this.slideDirty = true;
+      this.slide.set(1);
+    }
+    const bumping = !this.bump.settled;
+    if (!this.sliding && !bumping && !this.slideDirty) return;
+
+    const live = this.botCanvas.style;
+    const glow = this.botGlow.style;
+    if (this.sliding) {
+      const p = this.slide.value;
+      const dy = (1 - p) * this.slideDir * SLIDE_D + this.bump.value;
+      live.transform = glow.transform = `translateY(${dy}px)`;
+      this.snapCanvas.style.transform = `translateY(${-p * this.slideDir * SLIDE_D}px)`;
+      this.snapCanvas.style.opacity = String(clamp(1 - p * 1.4, 0, 1));
+      // Clip to the stage so the bot never slides over the header or the panel.
+      const right = this.width.value - STAGE.left - STAGE.w;
+      this.botLayer.style.clipPath = `inset(${STAGE.top}px ${right}px ${STAGE.bottomInset}px ${STAGE.left}px round 20px)`;
+    } else {
+      const dy = overview ? this.bump.value : 0;
+      live.transform = glow.transform = dy ? `translateY(${dy}px)` : "";
+      this.snapCanvas.style.display = "none";
+      this.botLayer.style.clipPath = "";
+      if (!bumping) this.bump.set(0);
+    }
+    this.slideDirty = false;
+  }
+
   private updateBotTargets() {
     const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
     this.botCx.target = p.cx;
@@ -758,7 +863,7 @@ export class Island {
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
     // The drop canvas draws its own Mochi; two of them would overlap.
     const visible = p.opacity > 0 && !greetingActive && !this.uploadActive;
-    this.botCanvas.style.opacity = visible ? "1" : "0";
+    this.botCanvas.style.opacity = visible ? (this.sliding ? String(clamp(this.slide.value, 0, 1)) : "1") : "0";
 
     if (State.mode === "expanded" && State.view !== "uploading" && !greetingActive && !this.uploadActive) {
       const d = p.diameter;
@@ -851,6 +956,7 @@ export class Island {
     this.header.sync();
     for (const [name, view] of this.views) {
       const on = name === State.view;
+      if (!on && view.el.classList.contains("on")) view.leave?.();
       view.el.classList.toggle("on", on);
       if (on) view.sync();
     }

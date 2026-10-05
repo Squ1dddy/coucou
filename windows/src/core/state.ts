@@ -129,6 +129,8 @@ class AppState {
 
   tasks: AgentTask[] = [];
   focusId: string | null = null;
+  /** Direction of the last focus change, for the carousel slide (+1 = next agent). */
+  focusDir: 1 | -1 = 1;
 
   stateOverride: BotStateName | null = null;
 
@@ -184,6 +186,9 @@ class AppState {
   setFocus(id: string) {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return;
+    // Which way the carousel slides: toward a later agent is "down" (+1).
+    const from = this.tasks.findIndex((x) => x.id === this.focusTask?.id);
+    this.focusDir = this.tasks.indexOf(t) >= from ? 1 : -1;
     this.focusId = id;
     t.pillBadge = null;
     this.notify();

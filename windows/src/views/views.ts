@@ -7,7 +7,7 @@ import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { State, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
-import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
+import { WheelStepper } from "../core/carousel";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
@@ -16,6 +16,8 @@ export interface ViewActions {
   setView(v: IslandViewName): void;
   collapse(): void;
   setFocus(id: string): void;
+  /** Wheel over the carousel: next (+1) or previous (-1) agent, bouncing at the ends. */
+  stepFocus(dir: 1 | -1): void;
   /** Brings the Claude desktop app forward (VS Code where there is none). */
   openClaude(): void;
   /** The ↗ button: opens whatever the focused pill points at. */
@@ -36,6 +38,8 @@ export interface ViewHost {
   focus?(): void;
   /** Called every frame while the view is on screen. */
   tick?(nowMs: number): void;
+  /** Called when the view stops being the active one. */
+  leave?(): void;
 }
 
 // ── Shared pieces ─────────────────────────────────────────────────────────────
@@ -117,30 +121,80 @@ export function buildHeader(actions: ViewActions): ViewHost {
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 
+/** Badge colours shared by the carousel's dots. */
+const BADGE_COLORS = { approval: "#F5A524", finished: "#22C55E", error: "#F4505E" } as const;
+
+/** How far (px) the name and detail panel travel while the carousel slides. */
+const SLIDE_PX = 26;
+const SLIDE_MS = 340;
+const SLIDE_EASE = "cubic-bezier(0.3, 1.1, 0.4, 1)";
+
+/**
+ * Cross-slides `body` for a focus change: a ghost copy of the old content slides
+ * out while the (already re-rendered) body slides in from the other side.
+ * `dir` +1 = next agent: old goes up, new comes from below.
+ */
+function crossSlide(host: HTMLElement, body: HTMLElement, ghost: HTMLElement | null, dir: 1 | -1) {
+  if (ghost) {
+    ghost.classList.add("ghost");
+    host.append(ghost);
+    const out = ghost.animate(
+      [
+        { transform: "translateY(0)", opacity: 1 },
+        { transform: `translateY(${-dir * SLIDE_PX}px)`, opacity: 0 },
+      ],
+      { duration: SLIDE_MS, easing: SLIDE_EASE, fill: "forwards" },
+    );
+    out.onfinish = () => ghost.remove();
+  }
+  body.animate(
+    [
+      { transform: `translateY(${dir * SLIDE_PX}px)`, opacity: 0 },
+      { transform: "translateY(0)", opacity: 1 },
+    ],
+    { duration: SLIDE_MS, easing: SLIDE_EASE },
+  );
+}
+
 function buildOverview(actions: ViewActions): ViewHost {
   const ticker = new Ticker();
   const who = h("div", { class: "who" });
   const tickerBody = h("div", { class: "card-body" }, who, ticker.el);
-  const leftBody = h("div", { class: "left-body" });
+  const detailBody = h("div", { class: "detail-body" });
   const jump = h(
     "button",
     { class: "icon-btn jump", title: "Open", onclick: () => actions.openTarget() },
     svg(ICONS.arrowUpRight, 8),
   );
-  const left = card(null, leftBody, jump);
-  const pills = h("div", { class: "pills" });
-  const right = card(null, pills);
+  const detail = card(null, detailBody, jump);
+  detail.classList.add("detail-panel");
 
-  const el = h("div", { class: "view overview" },
-    h("div", { class: "left" }, left),
-    h("div", { class: "right" }, right),
+  // Left column: the island draws the bot over it; the name and dots live here.
+  const nameEl = h("div", { class: "stage-name" });
+  const dots = h("div", { class: "stage-dots" });
+  const stage = h("div", { class: "stage" }, card(null), nameEl, dots);
+
+  // The wheel switches agents over the stage only; the detail panel scrolls natively.
+  const stepper = new WheelStepper();
+  stage.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      const dir = stepper.feed(e.deltaY, performance.now(), e.deltaMode);
+      if (dir) actions.stepFocus(dir);
+    },
+    { passive: false },
   );
 
-  let pillIds = "";
+  const el = h("div", { class: "view overview" }, stage, h("div", { class: "right" }, detail));
+
+  let dotKey = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
   let mode: "ticker" | "card" | null = null;
   let cardKey = "";
+  /** False while the view is off screen, so a focus change then does not animate. */
+  let shown = false;
 
   const hooks: IntegrationCardHooks = {
     get detailOpen() {
@@ -164,14 +218,26 @@ function buildOverview(actions: ViewActions): ViewHost {
     tick(nowMs: number) {
       if (mode === "ticker") ticker.tick(nowMs);
     },
+    leave() {
+      shown = false;
+    },
     sync() {
       const task = State.focusTask;
-      if (task?.id !== lastFocus) {
+      let ghostBody: HTMLElement | null = null;
+      let ghostName: HTMLElement | null = null;
+      const changed = task?.id !== lastFocus;
+      if (changed) {
+        if (shown && lastFocus != null) {
+          ghostBody = detailBody.cloneNode(true) as HTMLElement;
+          ghostName = nameEl.cloneNode(true) as HTMLElement;
+        }
         lastFocus = task?.id ?? null;
         detailOpen = false;
         cardKey = "";
         mode = null;
       }
+
+      nameEl.textContent = task ? (task.id === "integration_claude" ? "Claude Code" : task.name) : "";
 
       // The Claude Code pill with a live Claude Code session keeps the ticker; every other
       // pill shows its own card, exactly like IntegrationCardView.
@@ -180,8 +246,8 @@ function buildOverview(actions: ViewActions): ViewHost {
 
       if (task && sessionActive) {
         if (mode !== "ticker") {
-          clear(leftBody);
-          leftBody.append(tickerBody);
+          clear(detailBody);
+          detailBody.append(tickerBody);
           mode = "ticker";
           cardKey = "";
         }
@@ -208,65 +274,46 @@ function buildOverview(actions: ViewActions): ViewHost {
         if (key !== cardKey) {
           cardKey = key;
           mode = "card";
-          clear(leftBody);
-          leftBody.append(renderIntegrationCard(task, hooks));
+          clear(detailBody);
+          detailBody.append(renderIntegrationCard(task, hooks));
         }
       }
 
       jump.style.display = detailOpen ? "none" : "";
 
-      const others = State.otherTasks.slice(0, 4);
-      const pillKey = others.map((t) => `${t.id}:${t.pillBadge ?? ""}`).join("|");
-      if (pillKey !== pillIds) {
-        pillIds = pillKey;
-        clear(pills);
-        for (const t of others) pills.append(buildPill(t, actions));
-        pruneMiniBots();
+      // Dot strip: one dot per agent, the current one longer; a finished / waiting /
+      // failed agent glows in its badge colour.
+      const key = State.tasks.map((t) => `${t.id}:${t.pillBadge ?? ""}`).join("|") + `@${task?.id}`;
+      if (key !== dotKey) {
+        dotKey = key;
+        clear(dots);
+        for (const t of State.tasks) {
+          const d = h("i");
+          if (t.pillBadge) {
+            const c = BADGE_COLORS[t.pillBadge];
+            d.style.background = c;
+            d.style.boxShadow = `0 0 6px ${c}`;
+          }
+          const b = h(
+            "button",
+            {
+              class: t.id === task?.id ? "stage-dot on" : "stage-dot",
+              title: t.name,
+              onclick: () => actions.setFocus(t.id),
+            },
+            d,
+          );
+          dots.append(b);
+        }
       }
+
+      if (changed && shown && ghostBody && ghostName) {
+        crossSlide(detail, detailBody, ghostBody, State.focusDir);
+        crossSlide(stage, nameEl, ghostName, State.focusDir);
+      }
+      shown = true;
     },
   };
-}
-
-function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
-  const label = task.id === "integration_claude" ? "Claude Code" : task.name;
-  const canvas = createMiniBot(task, 24);
-  const pill = h(
-    "div",
-    { class: "pill", onclick: () => actions.setFocus(task.id) },
-    canvas,
-    h("span", { class: "lbl", text: label }),
-  );
-  pill.style.borderColor = `${task.color}24`;
-  pill.addEventListener("mouseenter", () => {
-    pill.style.background = `${task.color}2e`;
-    pill.style.borderColor = `${task.color}8c`;
-    pill.style.boxShadow = `0 2px 10px ${task.color}59`;
-    (pill.querySelector(".lbl") as HTMLElement).style.color = lighten(task.color, 0.3);
-  });
-  pill.addEventListener("mouseleave", () => {
-    pill.style.background = "";
-    pill.style.borderColor = `${task.color}24`;
-    pill.style.boxShadow = "";
-    (pill.querySelector(".lbl") as HTMLElement).style.color = "";
-  });
-
-  if (task.pillBadge) {
-    const colors = { approval: "#F5A524", finished: "#22C55E", error: "#F4505E" } as const;
-    const icons = { approval: ICONS.bang, finished: ICONS.check, error: ICONS.xmark } as const;
-    const inner = h("i", { style: `background:${colors[task.pillBadge]}` }, svg(icons[task.pillBadge], 6, { stroke: task.pillBadge === "finished" ? 3 : 0 }));
-    const badge = h("div", { class: "pill-badge" }, inner);
-    badge.style.boxShadow = `0 0 4px ${colors[task.pillBadge]}99`;
-    pill.append(badge);
-  }
-  return pill;
-}
-
-function lighten(hex: string, amount: number): string {
-  const v = parseInt(hex.replace("#", ""), 16);
-  const c = [(v >> 16) & 255, (v >> 8) & 255, v & 255].map((x) =>
-    Math.min(255, Math.round(x + amount * 255)),
-  );
-  return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
 // ── Empty ─────────────────────────────────────────────────────────────────────
