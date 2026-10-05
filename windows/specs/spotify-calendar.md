@@ -51,7 +51,8 @@ Personal tweaks for Beau's Windows Coucou:
 - Connect: Rust starts a one-shot loopback listener on 127.0.0.1 with a random free port, builds the auth URL with PKCE (S256) and a random `state`, opens it via the existing `platform::open_url`. The callback checks `state`, exchanges the code, shows a small "You can close this tab" page, and closes the listener. Times out after 5 min.
 - Tokens: refresh token and access token (+ expiry) live in Credential Manager via `secrets.rs`, never on disk, in logs or in the frontend. The access token is refreshed automatically before expiry; a revoked/invalid refresh token flips the card to "Reconnect".
 - Disconnect removes only this connector's tokens.
-- Redirect URIs: Spotify gets a fixed port, `http://127.0.0.1:43117/callback`, registered exactly (verify against current Spotify docs via context7/web before building; don't rely on dynamic-port matching). Google desktop clients accept any loopback port, so Google uses a random free port.
+- Redirect URIs: both use a random free port on `127.0.0.1`. Spotify: register `http://127.0.0.1/callback` with no port (Spotify allows a dynamic port for loopback IP literals; `localhost` is refused). Google desktop clients accept any loopback port.
+- Spotify development mode: up to 5 allowlisted users, owner needs Premium (Beau has it); Beau adds his own account under User Management.
 
 ### Developer app setup (Beau does this once)
 A wizard script walks Beau through:

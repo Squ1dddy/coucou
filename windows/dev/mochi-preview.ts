@@ -10,7 +10,7 @@ const STATES: BotStateName[] = [
   "idle", "working", "thinking", "searching", "approval", "question",
   "error", "finished", "ratelimit", "sleeping", "dizzy",
 ];
-const SIZE = 120;
+const SIZE = Number(new URLSearchParams(location.search).get("size")) || 120;
 const dpr = Math.min(2, window.devicePixelRatio || 1);
 const bigs: { canvas: HTMLCanvasElement; engine: BotEngine }[] = [];
 
