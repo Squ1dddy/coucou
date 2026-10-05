@@ -306,16 +306,27 @@ function oauthRow(provider: string): HTMLElement {
     button.className = on ? "danger" : "primary";
     button.disabled = false;
     button.dataset.on = on ? "1" : "";
+    button.dataset.waiting = "";
   }
 
   button.addEventListener("click", async () => {
+    // While the browser sign-in is open the button is "Cancel": stop it so Connect works again.
+    if (button.dataset.waiting) {
+      button.disabled = true;
+      await Bridge.oauthCancel(provider);
+      return;
+    }
     clear(feedback);
     button.disabled = true;
     try {
       if (button.dataset.on) {
         await Bridge.oauthDisconnect(provider);
       } else {
-        button.textContent = "Waiting for your browser…";
+        button.textContent = "Cancel";
+        button.className = "";
+        button.dataset.waiting = "1";
+        button.disabled = false;
+        label.textContent = "Waiting for your browser…";
         await Bridge.oauthConnect(provider);
       }
     } catch (err) {

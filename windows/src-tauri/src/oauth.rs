@@ -9,8 +9,8 @@
 // They are never logged, never written to disk and never sent to the front end:
 // the island only ever learns `connected: bool`.
 
-use std::collections::HashSet;
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
 
 use crate::log;
 use crate::platform;
@@ -327,20 +328,42 @@ pub fn forget_access_token(p: &Provider) {
 
 // ── Connect ───────────────────────────────────────────────────────────────────
 
-static CONNECTING: std::sync::LazyLock<Mutex<HashSet<&'static str>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+/// Sign-ins in progress, each with the signal that cancels it.
+static CONNECTING: std::sync::LazyLock<Mutex<HashMap<&'static str, Arc<Notify>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
-struct ConnectGuard(&'static str);
+struct ConnectGuard(&'static str, Arc<Notify>);
 
 impl ConnectGuard {
-    fn acquire(id: &'static str) -> Option<Self> {
-        CONNECTING.lock().unwrap().insert(id).then_some(ConnectGuard(id))
+    /// A new Connect replaces a sign-in still waiting (closed tab, blocked page).
+    fn acquire(id: &'static str) -> Self {
+        let cancel = Arc::new(Notify::new());
+        if let Some(old) = CONNECTING.lock().unwrap().insert(id, cancel.clone()) {
+            old.notify_one();
+        }
+        ConnectGuard(id, cancel)
     }
 }
 
 impl Drop for ConnectGuard {
     fn drop(&mut self) {
-        CONNECTING.lock().unwrap().remove(self.0);
+        // Only remove our own entry, never the sign-in that replaced it.
+        let mut map = CONNECTING.lock().unwrap();
+        if map.get(self.0).is_some_and(|c| Arc::ptr_eq(c, &self.1)) {
+            map.remove(self.0);
+        }
+    }
+}
+
+/// Stops a waiting sign-in so Connect can be tried again. False when none was open.
+fn cancel_connect(id: &str) -> bool {
+    match CONNECTING.lock().unwrap().get(id) {
+        Some(cancel) => {
+            // notify_one keeps the permit if the wait has not started yet.
+            cancel.notify_one();
+            true
+        }
+        None => false,
     }
 }
 
@@ -413,7 +436,7 @@ async fn wait_for_code(listener: &TcpListener, state: &str) -> Result<String, St
 
 async fn connect(p: &'static Provider) -> Result<(), String> {
     let client_id = secrets::get(p.client_id_key).ok_or("Enter your Client ID first")?;
-    let _guard = ConnectGuard::acquire(p.id).ok_or("A sign-in is already open")?;
+    let guard = ConnectGuard::acquire(p.id);
 
     let listener = TcpListener::bind(("127.0.0.1", p.fixed_port.unwrap_or(0)))
         .await
@@ -426,9 +449,11 @@ async fn connect(p: &'static Provider) -> Result<(), String> {
     let url = build_auth_url(p, &client_id, &redirect, &state, &pkce_challenge(&verifier));
     platform::open_url(&url);
 
-    let code = tokio::time::timeout(CONNECT_TIMEOUT, wait_for_code(&listener, &state))
-        .await
-        .map_err(|_| "Sign-in timed out".to_string())??;
+    let code = tokio::select! {
+        r = tokio::time::timeout(CONNECT_TIMEOUT, wait_for_code(&listener, &state)) =>
+            r.map_err(|_| "Sign-in timed out".to_string())??,
+        _ = guard.1.notified() => return Err("Sign-in cancelled".to_string()),
+    };
     drop(listener);
 
     let form = vec![
@@ -472,6 +497,13 @@ pub fn oauth_disconnect(app: AppHandle, provider: String) -> Result<(), String> 
     clear_tokens(p);
     let _ = app.emit("oauth-changed", p.id);
     Ok(())
+}
+
+/// Cancels a sign-in that is still waiting for the browser.
+#[tauri::command]
+pub fn oauth_cancel(provider: String) -> Result<bool, String> {
+    let p = lookup(&provider)?;
+    Ok(cancel_connect(p.id))
 }
 
 #[tauri::command]
@@ -592,5 +624,17 @@ mod tests {
         assert!(needs_refresh(Some(1059), 1000));
         assert!(!needs_refresh(Some(1061), 1000));
         assert!(!needs_refresh(Some(5000), 1000));
+    }
+
+    #[test]
+    fn cancel_and_replace_sign_in() {
+        assert!(!cancel_connect("test-a"));
+        let first = ConnectGuard::acquire("test-a");
+        assert!(cancel_connect("test-a"));
+        let second = ConnectGuard::acquire("test-a");
+        drop(first); // the replaced one must not remove the new entry
+        assert!(cancel_connect("test-a"));
+        drop(second);
+        assert!(!cancel_connect("test-a"));
     }
 }

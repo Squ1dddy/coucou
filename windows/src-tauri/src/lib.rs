@@ -457,6 +457,7 @@ pub fn run() {
             oauth::oauth_connect,
             oauth::oauth_disconnect,
             oauth::oauth_status,
+            oauth::oauth_cancel,
             spotify_control,
             spotify_volume,
             rewrite::rewrite_activity,

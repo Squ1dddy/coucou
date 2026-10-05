@@ -116,6 +116,8 @@ export const Bridge = {
   /** Opens the browser sign-in and resolves once it finishes (up to 5 min). */
   oauthConnect: (provider: string) => callOrThrow<void>("oauth_connect", { provider }),
   oauthDisconnect: (provider: string) => callOrThrow<void>("oauth_disconnect", { provider }),
+  /** Stops a sign-in still waiting for the browser. */
+  oauthCancel: (provider: string) => call<boolean>("oauth_cancel", { provider }),
   oauthStatus: (provider: string) => call<boolean>("oauth_status", { provider }),
   /** play | pause | next | previous. Rejects with a readable message. */
   spotifyControl: (action: "play" | "pause" | "next" | "previous") =>
