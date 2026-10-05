@@ -264,7 +264,7 @@ function calcomCard(): HTMLElement {
 }
 
 // ── Live updates ──────────────────────────────────────────────────────────────
-// The Spotify progress moves between polls.
+// The Spotify progress and the calendar's "in 20 min" badge move between polls.
 // One light timer, on only while a live card is on screen and the island is
 // showing the overview, so a hidden island stays at 0% CPU.
 
@@ -310,10 +310,10 @@ function setLive(anchor: HTMLElement | null, tick: (() => void) | null) {
 
 /**
  * Part of the overview's re-render key for cards that depend on the clock.
- * (None yet.)
+ * Calendar: which event is "next".
  */
-export function integrationCardSalt(_id: string): string {
-  return "";
+export function integrationCardSalt(id: string): string {
+  return id === "integration_gcal" ? (nextEventId(calendarEntries()) ?? "") : "";
 }
 
 /** True while the user drags the volume slider: a poll must not rebuild it. */
@@ -493,33 +493,134 @@ function spotifyCard(task: AgentTask): HTMLElement {
 
 // ── Google Calendar ───────────────────────────────────────────────────────────
 
+interface CalEntry {
+  raw: Record<string, unknown>;
+  allDay: boolean;
+  start: Date;
+  end: Date | null;
+  /** Local midnight of the day the event is listed under (never before today). */
+  day: number;
+}
+
+const DAY_MS = 86_400_000;
+
+function localMidnight(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** RFC 3339 date-time, or a bare `YYYY-MM-DD` read as a local date. */
+function parseWhen(value: unknown, allDay: boolean): Date | null {
+  const text = String(value ?? "");
+  const m = allDay ? /^(\d{4})-(\d{2})-(\d{2})/.exec(text) : null;
+  const date = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Events in reading order: by day, all-day first, then by start. */
+function calendarEntries(): CalEntry[] {
+  const today = localMidnight(new Date());
+  const out: CalEntry[] = [];
+  for (const raw of arr("integration_gcal", "events")) {
+    const allDay = raw.allDay === true;
+    const start = parseWhen(raw.start, allDay);
+    if (!start) continue;
+    out.push({
+      raw,
+      allDay,
+      start,
+      end: raw.end ? parseWhen(raw.end, allDay) : null,
+      day: Math.max(localMidnight(start), today),
+    });
+  }
+  return out.sort(
+    (a, b) => a.day - b.day || Number(b.allDay) - Number(a.allDay) || a.start.getTime() - b.start.getTime(),
+  );
+}
+
+/** The next timed event that has not ended: in progress, or the soonest upcoming. */
+function nextEntry(entries: CalEntry[], nowMs = Date.now()): CalEntry | null {
+  return entries.find((e) => !e.allDay && (e.end ?? e.start).getTime() > nowMs) ?? null;
+}
+
+function nextEventId(entries: CalEntry[]): string | null {
+  const next = nextEntry(entries);
+  return next ? String(next.raw.id ?? next.start.getTime()) : null;
+}
+
+/** "now", "in 20 min", "in 2 h", "in 3 d". */
+function relativeBadge(start: Date, nowMs = Date.now()): string {
+  const mins = Math.ceil((start.getTime() - nowMs) / 60_000);
+  if (mins <= 0) return "now";
+  if (mins < 60) return `in ${mins} min`;
+  const hours = Math.round(mins / 60);
+  return hours < 48 ? `in ${hours} h` : `in ${Math.round(hours / 24)} d`;
+}
+
+function dayHeading(day: number): string {
+  const diff = Math.round((day - localMidnight(new Date())) / DAY_MS);
+  if (diff <= 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return new Date(day).toLocaleDateString(undefined, { weekday: "long" });
+}
+
 function gcalCard(task: AgentTask): HTMLElement {
-  const rows = h("div", { class: "int-rows tight" });
-  const events = arr("integration_gcal", "events");
-  if (events.length === 0) {
-    rows.append(h("div", { class: "int-empty", text: "No more events today" }));
+  const color = task.color;
+  const entries = calendarEntries();
+  const list = h("div", { class: "cal-list" });
+  if (entries.length === 0) {
+    list.append(h("div", { class: "int-empty", text: "Nothing in the next 3 days" }));
   }
-  for (const e of events.slice(0, 3)) {
+  const next = nextEntry(entries);
+  let badge: HTMLElement | null = null;
+  let day = -1;
+  for (const entry of entries) {
+    if (entry.day !== day) {
+      day = entry.day;
+      list.append(h("div", { class: "cal-day", text: dayHeading(day) }));
+    }
+    const e = entry.raw;
     const link = typeof e.htmlLink === "string" ? e.htmlLink : "";
-    const when = e.allDay === true ? "All day" : localClock(e.start);
     const location = typeof e.location === "string" ? e.location : "";
-    rows.append(
-      h(
-        "button",
-        {
-          class: "int-page",
-          title: link ? "Open in Google Calendar" : "",
-          onclick: () => {
-            if (link) void Bridge.openUrl(link);
-          },
+    const isNext = entry === next;
+    const row = h(
+      "button",
+      {
+        class: isNext ? "cal-row next" : "cal-row",
+        title: link ? "Open in Google Calendar" : "",
+        style: isNext ? `--accent:${color};background:${color}14` : undefined,
+        onclick: () => {
+          if (link) void Bridge.openUrl(link);
         },
-        h("span", { class: "int-time", text: when }),
-        h("span", { class: "int-name", text: String(e.title ?? "(No title)") }),
-        ...(location ? [h("span", { class: "int-sub", text: location })] : []),
-      ),
+      },
+      h("span", { class: "cal-time", text: entry.allDay ? "All day" : localClock(e.start) }),
+      h("span", { class: "cal-title", text: String(e.title ?? "(No title)") }),
+      location ? h("span", { class: "cal-loc", text: location }) : null,
     );
+    if (isNext) {
+      badge = h("span", {
+        class: "cal-badge",
+        style: `color:${color};background:${color}24`,
+        text: relativeBadge(entry.start),
+      });
+      row.append(badge);
+    }
+    list.append(row);
   }
-  return h("div", { class: "int-card" }, header(task.color, "Google Calendar", "Today"), rows);
+
+  if (badge && next) {
+    const el: HTMLElement = badge;
+    const renderedId = nextEventId(entries);
+    setLive(el, () => {
+      // The next event changed (one started or ended): rebuild the list.
+      if (nextEventId(calendarEntries()) !== renderedId) return State.notify();
+      const text = relativeBadge(next.start);
+      if (el.textContent !== text) el.textContent = text;
+    });
+  } else {
+    setLive(null, null);
+  }
+
+  return h("div", { class: "int-card cal" }, h("div", { class: "int-kind", text: "Upcoming" }), list);
 }
 
 /** "14:30" in the user's time zone from an RFC 3339 date-time. */
@@ -528,6 +629,7 @@ function localClock(value: unknown): string {
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 }
+
 
 // ── n8n ───────────────────────────────────────────────────────────────────────
 
@@ -617,7 +719,7 @@ export function hasIntegrationData(id: string): boolean {
 }
 
 export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHooks): HTMLElement {
-  setLive(null, null); // only the Spotify card registers a timer below
+  setLive(null, null); // only the Spotify and calendar cards register a timer below
   if (task.id === "integration_n8n") {
     const hasActivity = task.steps.length > 0 && (task.state === "finished" || task.state === "error");
     return hooks.detailOpen && hasActivity

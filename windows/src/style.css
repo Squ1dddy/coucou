@@ -1283,7 +1283,7 @@ input[type="range"]::-webkit-slider-thumb {
   padding-left: 8px;
 }
 
-/* Small muted label at the top of the Spotify panel. */
+/* Small muted label at the top of the Spotify and calendar panels. */
 .int-kind {
   font: 500 10px var(--font);
   letter-spacing: 0.04em;
@@ -1479,6 +1479,98 @@ input[type="range"]::-webkit-slider-thumb {
 .sp-vol:active::-webkit-slider-thumb,
 .sp-vol:focus-visible::-webkit-slider-thumb {
   opacity: 1;
+}
+
+/* Calendar panel: day headings, one row per event, the next one highlighted. */
+.int-card.cal {
+  padding: 12px 12px 10px 14px;
+}
+
+.cal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 2px;
+}
+
+.cal-day {
+  font: 600 10px var(--font);
+  color: var(--dim-3);
+  padding: 8px 8px 3px;
+}
+
+.cal-day:first-child {
+  padding-top: 4px;
+}
+
+.cal-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  cursor: default;
+  min-width: 0;
+}
+
+.cal-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cal-row.next::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.cal-time {
+  flex: 0 0 52px;
+  font: 500 11px var(--mono);
+  color: var(--dim-2);
+  white-space: nowrap;
+}
+
+.cal-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font: 500 12px var(--font);
+  color: #c5c8cd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-row.next .cal-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.cal-loc {
+  flex: 1 1 0;
+  min-width: 0;
+  font: 400 11px var(--font);
+  color: #4d5159;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-badge {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font: 600 10px var(--font);
+  white-space: nowrap;
 }
 
 .int-pill {

@@ -910,7 +910,8 @@ fn local_offset_secs(now_utc: i64, local: &platform::LocalTime) -> i64 {
     (diff as f64 / 900.0).round() as i64 * 900
 }
 
-/// `(timeMin, timeMax)` for "the rest of today" in the user's time zone.
+/// `(timeMin, timeMax)`: now until the end of the day after tomorrow (three
+/// local days), in the user's time zone.
 fn gcal_window() -> (String, String) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -918,10 +919,13 @@ fn gcal_window() -> (String, String) {
         .unwrap_or(0);
     let local = platform::local_time();
     let offset = local_offset_secs(now, &local);
-    (
-        rfc3339_utc(now),
-        end_of_day_rfc3339(local.year.into(), local.month.into(), local.day.into(), offset),
-    )
+    gcal_window_at(now, local.year.into(), local.month.into(), local.day.into(), offset)
+}
+
+/// `gcal_window` for a given instant and local date.
+fn gcal_window_at(now_utc: i64, year: i64, month: i64, day: i64, offset_secs: i64) -> (String, String) {
+    let (y, m, d) = civil_from_days(days_from_civil(year, month, day) + 2);
+    (rfc3339_utc(now_utc), end_of_day_rfc3339(y, m, d, offset_secs))
 }
 
 async fn poll_gcal(app: AppHandle) {
@@ -941,7 +945,7 @@ async fn poll_gcal(app: AppHandle) {
             ("timeMax", time_max.as_str()),
             ("singleEvents", "true"),
             ("orderBy", "startTime"),
-            ("maxResults", "20"),
+            ("maxResults", "30"),
         ])
         .bearer_auth(&token)
         .send()
@@ -1118,6 +1122,17 @@ mod tests {
             {"url": "64", "width": 64}, {"url": "150", "width": 150}
         ]}}});
         assert_eq!(spotify_data(&small)["artUrl"], "150");
+    }
+
+    #[test]
+    fn gcal_window_runs_to_the_end_of_the_day_after_tomorrow() {
+        let now = days_from_civil(2026, 10, 5) * 86400 + 3600;
+        let (min, max) = gcal_window_at(now, 2026, 10, 5, 11 * 3600);
+        assert_eq!(min, "2026-10-05T01:00:00Z");
+        assert_eq!(max, "2026-10-07T23:59:59+11:00");
+        // Crosses a month and a leap-year February.
+        assert_eq!(gcal_window_at(now, 2026, 10, 30, 0).1, "2026-11-01T23:59:59+00:00");
+        assert_eq!(gcal_window_at(now, 2028, 2, 28, -3 * 3600).1, "2028-03-01T23:59:59-03:00");
     }
 
     #[test]
