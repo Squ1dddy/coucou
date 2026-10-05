@@ -797,6 +797,7 @@ export class Island {
     const focus = State.focusTask;
     this.engine.bodyColor = focus?.isIntegration ? hexToRGB(focus.color) : null;
     this.engine.setAccessory(focus?.isIntegration ? focus.accessory ?? null : null);
+    this.engine.setActivity(focus ? focus.activity ?? null : null);
     this.engine.particleOverhang = BOT_OVERHANG;
     this.engine.lookX = this.lookX();
     this.engine.lookY = this.lookY();

@@ -22,6 +22,8 @@ export interface AgentTask {
   sessionCwd?: string | null;
   /** Brand prop Mochi wears (headphones, calendar page). */
   accessory?: AccessoryKind | null;
+  /** What kind of work Mochi is doing right now (drives the work prop). */
+  activity?: "thinking" | "typing" | "searching" | null;
 }
 
 export interface ApprovalInfo {

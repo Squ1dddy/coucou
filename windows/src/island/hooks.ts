@@ -35,6 +35,23 @@ function validateAgent(raw: string | undefined): string | null {
   return raw;
 }
 
+type Activity = "thinking" | "typing" | "searching";
+
+const TYPING_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "Bash", "PowerShell"]);
+const SEARCHING_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch"]);
+
+function activityFor(tool: string): Activity {
+  if (TYPING_TOOLS.has(tool)) return "typing";
+  if (SEARCHING_TOOLS.has(tool)) return "searching";
+  return "thinking";
+}
+
+/** Sets (or clears, with null) the work prop on a pill. Display only. */
+function setActivity(id: string, activity: Activity | null) {
+  const t = State.tasks.find((x) => x.id === id);
+  if (t) t.activity = activity;
+}
+
 const FALLBACK_COLORS = ["#22C55E", "#EAB308", "#60A5FA", "#E879F9"];
 
 function agentColor(name: string): string {
@@ -161,6 +178,7 @@ function handleHook(island: Island, payload: HookPayload) {
     case "UserPromptSubmit": {
       ensurePill();
       State.updateTask(agentId, "thinking");
+      setActivity(agentId, "thinking");
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
       if (asked) State.appendStep(agentId, asked.slice(0, 60));
@@ -172,6 +190,7 @@ function handleHook(island: Island, payload: HookPayload) {
       ensurePill();
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
+      setActivity(agentId, activityFor(tool));
       State.appendStep(agentId, describeActivity(tool, payload.tool_input ?? {}));
       surface("overview", false);
       break;
@@ -191,9 +210,11 @@ function handleHook(island: Island, payload: HookPayload) {
       const lower = message.toLowerCase();
       if (lower.includes("rate limit") || lower.includes("limite d")) {
         State.updateTask(agentId, "ratelimit");
+        setActivity(agentId, null);
         Sound.play("rate");
       } else if (message.endsWith("?")) {
         State.updateTask(agentId, "question");
+        setActivity(agentId, null);
         State.appendStep(agentId, message);
       }
       break;
@@ -201,6 +222,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "Stop":
       State.updateTask(agentId, "finished");
+      setActivity(agentId, null);
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
       Sound.play("finish");
       if (focused) surface("finished", true);
@@ -217,6 +239,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "StopFailure":
       State.updateTask(agentId, "error");
+      setActivity(agentId, null);
       Sound.play("error");
       if (focused) surface("error", true);
       else State.setPillBadge(agentId, "error");
@@ -227,6 +250,7 @@ function handleHook(island: Island, payload: HookPayload) {
         State.removeTask(agentId);
       } else {
         State.updateTask(agentId, "idle");
+        setActivity(agentId, null);
         clearSession();
       }
       break;
@@ -257,6 +281,7 @@ function handleHook(island: Island, payload: HookPayload) {
         const questions = (payload.tool_input as { questions?: unknown[] } | undefined)?.questions;
         const count = Array.isArray(questions) ? questions.length : 1;
         State.updateTask(CLAUDE_ID, "question");
+        setActivity(CLAUDE_ID, null);
         State.appendStep(CLAUDE_ID, count > 1 ? `Claude has ${count} questions for you` : "Claude has a question for you");
         Sound.play("question");
         if (focused) {
@@ -290,6 +315,7 @@ function handleHook(island: Island, payload: HookPayload) {
       // line is synchronous, so the card really is up by the time it lands.
       if (requestId) void Bridge.approvalAck(requestId);
       State.updateTask(CLAUDE_ID, "approval");
+      setActivity(CLAUDE_ID, null);
       State.isPinned = true;
       Sound.play("approval");
       if (focused) {
