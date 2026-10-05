@@ -335,8 +335,15 @@ impl Drop for ConnectGuard {
     }
 }
 
+/// The message can carry the provider's `error` value straight from the callback
+/// query, so it is HTML-escaped before it goes into the page.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
+}
+
 fn page(ok: bool, message: &str) -> String {
     let title = if ok { "Signed in" } else { "Sign-in failed" };
+    let message = html_escape(message);
     format!(
         "<!doctype html><meta charset=utf-8><title>Coucou</title>\
          <body style=\"font:16px system-ui,sans-serif;background:#0b0c0f;color:#eee;\
@@ -477,6 +484,13 @@ mod tests {
             pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
             "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
         );
+    }
+
+    #[test]
+    fn callback_page_escapes_the_message() {
+        let html = page(false, "The provider refused the sign-in (<script>x</script>).");
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;"));
     }
 
     #[test]
