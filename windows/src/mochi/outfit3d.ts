@@ -137,33 +137,6 @@ export function mProjRoll(H: MochiH, p: Vec3): P3 {
   return { x: r[0] * H.rx, y: -r[1] * H.ry, z: r[2] };
 }
 
-/** Front arc of ring y under the roll projection (scarf). */
-export function mFrontArcRoll(H: MochiH, y: number, s: number): P3[] {
-  const n = 120;
-  const pts: P3[] = [];
-  for (let i = 0; i < n; i++) {
-    const lon = -Math.PI + (i / n) * 2 * Math.PI;
-    pts.push(mProjRoll(H, mSurf(y, lon, s)));
-  }
-  return frontSilhouetteArc(pts);
-}
-
-/** Clean superellipse body outline (mochiOutfitPath, n = 96). */
-export function mochiOutfitPath(rx: number, ry: number): Path2D {
-  const n = 96;
-  const e = 2 / K_EXP;
-  const p = new Path2D();
-  for (let i = 0; i <= n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    const ca = Math.cos(a), sa = Math.sin(a);
-    const px = rx * (ca >= 0 ? Math.pow(ca, e) : -Math.pow(-ca, e));
-    const py = ry * (sa >= 0 ? Math.pow(sa, e) : -Math.pow(-sa, e));
-    if (i === 0) p.moveTo(px, py); else p.lineTo(px, py);
-  }
-  p.closePath();
-  return p;
-}
-
 /** Path of the region above the front arc of ring y (what a cap covers). */
 export function mCapClip(H: MochiH, y: number, s: number, extraTop = 3): Path2D {
   const arc = mFrontArc(H, y, s);
@@ -229,7 +202,7 @@ const HP = "#2A2C33";
 const HP_PAD = "#474A54";
 type V3 = [number, number, number];
 
-export function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh: number, r: number) {
+function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh: number, r: number) {
   const rr = Math.max(0, Math.min(r, W / 2, Hh / 2));
   x.beginPath();
   x.moveTo(X + rr, Y);

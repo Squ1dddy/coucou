@@ -3,7 +3,6 @@
 
 import { BotEngine, hexToRGB } from "./engine";
 import type { AgentTask } from "../core/state";
-import { currentOutfit } from "./outfits";
 import type { BotEmoteName } from "../core/layout";
 
 interface MiniBot {
@@ -11,11 +10,6 @@ interface MiniBot {
   engine: BotEngine;
   cssSize: number;
   taskId: string;
-}
-
-/** Integration pills show only their brand prop; every other mini wears the outfit. */
-function wornBy(task: AgentTask) {
-  return task.isIntegration ? task.accessory ?? null : currentOutfit();
 }
 
 const live = new Map<HTMLCanvasElement, MiniBot>();
@@ -47,7 +41,7 @@ export function createMiniBot(task: AgentTask, bodySize: number): HTMLElement {
   const engine = new BotEngine();
   engine.isMini = true;
   engine.bodyColor = hexToRGB(task.color);
-  engine.setAccessory(wornBy(task), false);
+  engine.setAccessory(task.accessory ?? null, false);
   engine.setState(task.state, true);
   if (task.emote) engine.setPermanentEmote(task.emote);
   if (task.miniEye) {
@@ -88,7 +82,7 @@ export function syncMiniBotStates(tasks: AgentTask[]) {
     if (!task) continue;
     mb.engine.setState(task.state);
     mb.engine.bodyColor = hexToRGB(task.color);
-    mb.engine.setAccessory(wornBy(task), false);
+    mb.engine.setAccessory(task.accessory ?? null, false);
   }
 }
 

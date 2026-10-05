@@ -8,14 +8,6 @@ import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
 import { drawAccessory, makeH, type AccessoryName } from "./outfit3d";
-import { drawOutfit, outfitRecolorsBody } from "./wardrobe";
-import { isOutfitName, type OutfitName } from "./outfits";
-
-/** What a bot can wear: a brand prop (integrations) or a wardrobe outfit (Claude bots). */
-export type WornName = AccessoryName | OutfitName;
-
-const PUMPKIN_TOP = hexToRGB("#FFA94D");
-const PUMPKIN_BOTTOM = hexToRGB("#E8590C");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -262,13 +254,11 @@ export class BotEngine {
   sx = 1; sy = 1; oy = 0; ox = 0;
   tint = 0; morph = 0; hands = 0; blush = 0; es = 1; badgeS = 0;
 
-  /** Brand prop or outfit being drawn (headphones, calendar page, a hat...); null = none. */
-  accessory: WornName | null = null;
-  /** Turns of the roll in progress (outfits fly off over the whole roll). */
-  rollTurns = 1;
+  /** Brand prop being drawn (headphones, calendar page); null = none. */
+  accessory: AccessoryName | null = null;
   /** 0…1 presence of the prop; drives its scale and opacity. */
   accPresence = 0;
-  private accTarget: WornName | null = null;
+  private accTarget: AccessoryName | null = null;
 
   // Targets
   tgYaw = 0; tgPitch = 0; tgTilt = 0; tgSy = 1; tgSx = 1; tgEs = 1;
@@ -374,7 +364,7 @@ export class BotEngine {
    * 1→0 over 180 ms then cleared; switching kinds = exit then enter. A no-op when
    * the target is unchanged.
    */
-  setAccessory(kind: WornName | null, animated = true) {
+  setAccessory(kind: AccessoryName | null, animated = true) {
     // Same target = already there or on its way. Called every frame, so a swap in
     // flight (old prop still fading out) must not restart its exit tween.
     if (kind === this.accTarget) {
@@ -384,7 +374,7 @@ export class BotEngine {
     this.accTarget = kind;
     if (!animated) { this.snapAccessory(kind); return; }
 
-    const enter = (k: WornName) => {
+    const enter = (k: AccessoryName) => {
       this.accessory = k;
       this.anim("accPresence", [[1, 350, Ease.inOut]]);
     };
@@ -401,7 +391,7 @@ export class BotEngine {
     }
   }
 
-  private snapAccessory(kind: WornName | null) {
+  private snapAccessory(kind: AccessoryName | null) {
     this.tweens.delete("accPresence");
     this.locks.delete("accPresence");
     this.accTarget = kind;
@@ -452,7 +442,6 @@ export class BotEngine {
 
   doRoll(durationMs: number, turns: number) {
     this.roll = 0;
-    this.rollTurns = turns;
     this.anim("roll", [[Math.PI * 2 * turns, durationMs, Ease.inOut]], () => { this.roll = 0; });
   }
 
@@ -859,16 +848,11 @@ export class BotEngine {
     if (alpha <= 0.005) return;
     x.save();
     x.globalAlpha = alpha;
-    const H = makeH(R, this.yaw, this.pitch, 0, 0, this.roll);
-    if (isOutfitName(kind)) {
-      drawOutfit(x, kind, H, behind, { mini: this.isMini, presence: p, rollTurns: this.rollTurns });
-    } else {
-      drawAccessory(x, kind, H, behind, {
-        mini: this.isMini,
-        scale: 0.85 + 0.15 * Ease.back(p),
-        miniInk: MINI_INK,
-      });
-    }
+    drawAccessory(x, kind, makeH(R, this.yaw, this.pitch, 0, 0, this.roll), behind, {
+      mini: this.isMini,
+      scale: 0.85 + 0.15 * Ease.back(p),
+      miniInk: MINI_INK,
+    });
     x.restore();
   }
 
@@ -905,15 +889,8 @@ export class BotEngine {
     // slightly darker at the bottom. No shine, no edge shading (they read as 3D).
     // No state-colour wash either: over Claude orange, blue and purple turn muddy
     // grey; the state reads from the badge, the glow and the eyes instead.
-    let top = this.bodyColor ? bodyTop(this.bodyColor) : BASE_TOP;
-    let bottom = this.bodyColor ? bodyBottom(this.bodyColor) : BASE_BOTTOM;
-    // Pumpkin outfit: the body turns orange (not on minis), fading with the outfit.
-    if (!this.isMini && outfitRecolorsBody(isOutfitName(this.accessory) ? this.accessory : null)) {
-      const k = Math.min(1, Math.max(0, this.accPresence));
-      const mix = (a: RGB, b: RGB): RGB => [lerp(a[0], b[0], k), lerp(a[1], b[1], k), lerp(a[2], b[2], k)];
-      top = mix(top, PUMPKIN_TOP);
-      bottom = mix(bottom, PUMPKIN_BOTTOM);
-    }
+    const top = this.bodyColor ? bodyTop(this.bodyColor) : BASE_TOP;
+    const bottom = this.bodyColor ? bodyBottom(this.bodyColor) : BASE_BOTTOM;
     const g = x.createLinearGradient(0, -ry, 0, ry);
     g.addColorStop(0, rgba(top));
     g.addColorStop(1, rgba(bottom));

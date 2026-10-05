@@ -21,14 +21,6 @@ pub struct Settings {
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
-    /// Mochi's wardrobe: an outfit id (none, partyHat, ...) or "auto" for the seasons.
-    /// An unknown value is treated as "auto" by the island.
-    #[serde(default = "default_outfit")]
-    pub outfit: String,
-}
-
-fn default_outfit() -> String {
-    "auto".to_string()
 }
 
 fn default_model() -> String {
@@ -50,7 +42,6 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
-            outfit: default_outfit(),
         }
     }
 }
@@ -78,19 +69,4 @@ pub fn save(settings: &Settings) -> std::io::Result<()> {
     let json = serde_json::to_vec_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     std::fs::write(settings_path(), json)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn settings_without_outfit_load_as_auto() {
-        let json = r#"{"soundEnabled":true,"soundVolume":0.1,"autoCloseInterval":15.0,
-            "absenceInterval":180.0,"activeIntegrations":[],"screen":"primary",
-            "autostart":false,"hooksInstalled":false}"#;
-        let s: Settings = serde_json::from_str(json).unwrap();
-        assert_eq!(s.outfit, "auto");
-        assert_eq!(s.model, default_model());
-    }
 }

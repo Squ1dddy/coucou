@@ -207,8 +207,6 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
-  /** Mochi's outfit id, or "auto" for the seasons. */
-  outfit: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -221,7 +219,6 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
-  outfit: "auto",
 };
 
 type Listener = () => void;
