@@ -192,11 +192,11 @@ function inPass(z: number, behind: boolean) {
 
 // Headphones (the Spotify prop) ------------------------------------------------
 //
-// Flat 2D headphones resting around the neck, on Mochi's imaginary shoulders:
-// the band hangs behind and peeks out under the chin, the two cups sit angled at
-// the lower sides of the body. (Over the head looked wrong; the head is too
-// wide.) Anchors are head-local points projected through the 3D head, so the
-// prop still turns, tilts, squashes and rolls with Mochi.
+// Flat 2D headphones worn from behind: the band runs round the back of the head
+// (hidden by the body), so only the two ear cups show, peeking out at each side
+// at ear height. Everything draws in the behind pass. Anchors are head-local
+// points projected through the 3D head, so the cups turn, tilt and squash with
+// Mochi.
 
 const HP = "#2A2C33";
 const HP_PAD = "#474A54";
@@ -214,44 +214,29 @@ function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh:
 }
 
 function drawHeadphones(x: CanvasRenderingContext2D, H: MochiH, behind: boolean, o: AccessoryOpts) {
+  if (!behind) return;
   const R = H.R;
   const mini = o.mini;
   const P = (p: V3) => mProjRoll(H, p);
-  // Minis keep everything inside the silhouette so it reads at 13-24 px.
-  const cx = mini ? 0.62 : 0.8;
-  const cy = mini ? -0.6 : -0.74;
-  const left = P([-cx, cy, 0.5]);
-  const right = P([cx, cy, 0.5]);
-  const cw = R * (mini ? 0.44 : 0.34);
-  const ch = R * (mini ? 0.62 : 0.5);
+  // Cup centres sit on the head's side edge, a little behind it, so half of
+  // each cup sticks out past the silhouette.
+  const left = P([-1.12, 0.05, -0.25]);
+  const right = P([1.12, 0.05, -0.25]);
+  const cw = R * (mini ? 0.4 : 0.34);
+  const ch = R * (mini ? 0.62 : 0.52);
 
   x.save();
   x.scale(o.scale, o.scale);
-  x.lineCap = "round";
-
-  // Band: behind the body, a U from cup to cup dipping under the chin.
-  if (behind) {
-    const dip = R * (mini ? 0.42 : 0.62);
-    x.beginPath();
-    x.moveTo(left.x, left.y);
-    x.bezierCurveTo(left.x, left.y + dip, right.x, right.y + dip, right.x, right.y);
-    x.strokeStyle = HP;
-    x.lineWidth = R * (mini ? 0.2 : 0.13);
-    x.stroke();
-  }
-
-  // Cups: in front, tilted outward like they're resting on the shoulders.
   for (const [c, sd] of [[left, -1], [right, 1]] as const) {
-    if (!inPass(c.z, behind) || behind) continue;
     x.save();
     x.translate(c.x, c.y);
-    x.rotate(sd * 0.55);
     rrect(x, -cw / 2, -ch / 2, cw, ch, cw * 0.48);
-    x.fillStyle = HP;
+    // Minis sit on the black island: a lighter grey keeps the cups readable.
+    x.fillStyle = mini ? "#6B6F7A" : HP;
     x.fill();
     if (!mini) {
-      // The ear cushion, facing up and inward.
-      rrect(x, -cw * 0.3, -ch * 0.42, cw * 0.6, ch * 0.34, ch * 0.17);
+      // The outer shell's lighter cap, on the side facing away from the head.
+      rrect(x, sd > 0 ? cw * 0.02 : -cw * 0.34, -ch * 0.32, cw * 0.32, ch * 0.64, cw * 0.16);
       x.fillStyle = HP_PAD;
       x.fill();
     }
