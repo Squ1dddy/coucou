@@ -3,7 +3,7 @@
 
 import { BotEngine, hexToRGB } from "../src/mochi/engine";
 import { createMiniBot, tickMiniBots } from "../src/mochi/minibots";
-import { INTEGRATION_AGENTS, type AgentTask } from "../src/core/state";
+import { INTEGRATION_AGENTS, type AccessoryKind, type AgentTask } from "../src/core/state";
 import type { BotStateName } from "../src/core/layout";
 
 const STATES: BotStateName[] = [
@@ -36,9 +36,13 @@ const connectors = document.getElementById("connectors")!;
 for (const t of INTEGRATION_AGENTS) {
   bigBot(connectors, t.name, (e) => {
     e.bodyColor = hexToRGB(t.color);
+    e.setAccessory(t.accessory ?? null, false);
     e.setState("idle", true);
   });
 }
+// Default orange Mochi wearing each prop.
+bigBot(connectors, "Mochi + headphones", (e) => { e.setAccessory("headphones", false); e.setState("idle", true); });
+bigBot(connectors, "Mochi + calendar", (e) => { e.setAccessory("calendar", false); e.setState("idle", true); });
 
 const minis = document.getElementById("minis")!;
 for (const size of [13, 24]) {
@@ -61,10 +65,21 @@ const actions: [string, (e: BotEngine) => void][] = [
   ["Morph in", (e) => e.animateMorph(1)],
   ["Morph out", (e) => e.animateMorph(0)],
 ];
+// Props on/off: toggles every big bot's accessory (animated) to watch the presence motion.
+const propKinds = new Map<BotEngine, AccessoryKind | null>();
+for (const { engine } of bigs) propKinds.set(engine, engine.accessory);
+let propsOn = true;
+actions.push(["Props on/off", (e) => {
+  const kind = propKinds.get(e) ?? null;
+  e.setAccessory(propsOn ? null : kind, true);
+}]);
 for (const [label, fn] of actions) {
   const b = document.createElement("button");
   b.textContent = label;
-  b.onclick = () => bigs.forEach((x) => fn(x.engine));
+  b.onclick = () => {
+    bigs.forEach((x) => fn(x.engine));
+    if (label === "Props on/off") propsOn = !propsOn;
+  };
   controls.append(b);
 }
 

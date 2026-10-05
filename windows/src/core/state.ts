@@ -4,6 +4,7 @@ import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./l
 import type { EyeShape } from "../mochi/engine";
 
 export type AgentSource = "claudeCode" | "n8n" | "agent";
+export type AccessoryKind = "headphones" | "calendar";
 export type PillBadge = "approval" | "finished" | "error";
 
 export interface AgentTask {
@@ -19,6 +20,8 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** Brand prop Mochi wears (headphones, calendar page). */
+  accessory?: AccessoryKind | null;
 }
 
 export interface ApprovalInfo {
@@ -52,8 +55,10 @@ export interface SearchResult {
 
 const task = (
   id: string, name: string, color: string, source: AgentSource,
+  accessory: AccessoryKind | null = null,
 ): AgentTask => ({
   id, name, color, state: "idle", stepIndex: 0, steps: [], source, isIntegration: true,
+  ...(accessory ? { accessory } : {}),
 });
 
 /** AgentTask.integrationAgents — same ids, names and colours as macOS. */
@@ -64,11 +69,14 @@ export const INTEGRATION_AGENTS: AgentTask[] = [
   task("integration_notion", "Notion", "#8C8C8C", "n8n"),
   task("integration_calcom", "Cal.com", "#C9956A", "n8n"),
   task("integration_stripe", "Stripe", "#0570DE", "n8n"),
+  task("integration_spotify", "Spotify", "#1DB954", "n8n", "headphones"),
+  task("integration_gcal", "Google Calendar", "#4285F4", "n8n", "calendar"),
 ];
 
 export const TOGGLEABLE_INTEGRATION_IDS = [
   "integration_n8n", "integration_vercel",
   "integration_notion", "integration_calcom", "integration_stripe",
+  "integration_spotify", "integration_gcal",
 ];
 
 /** Drops connectors this build no longer has (e.g. GitHub, Resend) from saved

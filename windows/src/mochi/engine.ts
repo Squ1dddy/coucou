@@ -7,6 +7,7 @@
 import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
+import { drawAccessory, makeH, type AccessoryName } from "./outfit3d";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,7 +37,7 @@ interface Tween {
 
 type PropKey =
   | "yaw" | "pitch" | "roll" | "tilt" | "open" | "sx" | "sy"
-  | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS";
+  | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS" | "accPresence";
 
 interface BotStateCfg {
   color: RGB;
@@ -178,6 +179,12 @@ export class BotEngine {
   sx = 1; sy = 1; oy = 0; ox = 0;
   tint = 0; morph = 0; hands = 0; blush = 0; es = 1; badgeS = 0;
 
+  /** Brand prop being drawn (headphones, calendar page); null = none. */
+  accessory: AccessoryName | null = null;
+  /** 0…1 presence of the prop; drives its scale and opacity. */
+  accPresence = 0;
+  private accTarget: AccessoryName | null = null;
+
   // Targets
   tgYaw = 0; tgPitch = 0; tgTilt = 0; tgSy = 1; tgSx = 1; tgEs = 1;
 
@@ -275,6 +282,44 @@ export class BotEngine {
       this.badge = b;
       if (b) this.anim("badgeS", [[1, 280, Ease.back]]);
     }, 100);
+  }
+
+  /**
+   * Puts a brand prop on (or takes it off). Enter: presence 0→1 over 350 ms; exit:
+   * 1→0 over 180 ms then cleared; switching kinds = exit then enter. A no-op when
+   * the target is unchanged.
+   */
+  setAccessory(kind: AccessoryName | null, animated = true) {
+    if (kind === this.accTarget && (this.accessory === kind || kind === null)) {
+      if (!animated && this.accPresence !== (kind ? 1 : 0)) this.snapAccessory(kind);
+      return;
+    }
+    this.accTarget = kind;
+    if (!animated) { this.snapAccessory(kind); return; }
+
+    const enter = (k: AccessoryName) => {
+      this.accessory = k;
+      this.anim("accPresence", [[1, 350, Ease.inOut]]);
+    };
+    if (this.accessory && this.accessory !== kind) {
+      this.anim("accPresence", [[0, 180, Ease.inOut]], () => {
+        if (this.accTarget === kind) {
+          this.accessory = null;
+          if (kind) { this.accPresence = 0; enter(kind); }
+        }
+      });
+    } else if (kind) {
+      if (!this.accessory) this.accPresence = 0;
+      enter(kind);
+    }
+  }
+
+  private snapAccessory(kind: AccessoryName | null) {
+    this.tweens.delete("accPresence");
+    this.locks.delete("accPresence");
+    this.accTarget = kind;
+    this.accessory = kind;
+    this.accPresence = kind ? 1 : 0;
   }
 
   blink() {
@@ -659,6 +704,7 @@ export class BotEngine {
     x.scale(this.sx, this.sy);
 
     const body = this.bodyPath(rx, ry, R);
+    this.drawAccessoryPass(x, R, true);
     this.drawBody(x, body, R, rx, ry);
 
     const blushVal = Math.max(this.blush, this.tint * 0.5) * (1 - this.morph);
@@ -677,6 +723,7 @@ export class BotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
+    this.drawAccessoryPass(x, R, false);
 
     x.restore();
 
@@ -684,6 +731,24 @@ export class BotEngine {
       this.drawBadge(x, this.badge, R, cx, cy);
     }
     this.drawParticles(x, R, cx, cy);
+  }
+
+  /** Brand prop, one pass. A pure read of engine state; no-op without an accessory. */
+  private drawAccessoryPass(x: CanvasRenderingContext2D, R: number, behind: boolean) {
+    const kind = this.accessory;
+    if (!kind) return;
+    const p = Math.min(1, Math.max(0, this.accPresence));
+    const morphFade = 1 - Math.min(1, Math.max(0, (this.morph - 0.3) / 0.2));
+    const alpha = morphFade * Math.min(1, p * 2.5);
+    if (alpha <= 0.005) return;
+    x.save();
+    x.globalAlpha = alpha;
+    drawAccessory(x, kind, makeH(R, this.yaw, this.pitch, 0, 0, this.roll), behind, {
+      mini: this.isMini,
+      scale: 0.85 + 0.15 * Ease.back(p),
+      miniInk: MINI_INK,
+    });
+    x.restore();
   }
 
   private bodyPath(rx: number, ry: number, R: number): Path2D {
