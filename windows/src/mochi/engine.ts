@@ -8,6 +8,12 @@ import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
 import { drawAccessory, makeH, type AccessoryName } from "./outfit3d";
+import {
+  ERROR_END, OVERLAY_MIN_R, drawOverlay, overlayFor, overlayHasHands, overlayPose,
+  type Activity, type OverlayKind, type Pose,
+} from "./props";
+
+export type { Activity } from "./props";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -295,6 +301,15 @@ export class BotEngine {
   lookX = 0;
   lookY = 0;
 
+  /** What the working animation shows (set from the tool in use); null = typing. */
+  activity: Activity | null = null;
+  /** Radius of the last draw; the overlay guards need it in update(). */
+  private lastR = 0;
+  /** Clock of the last update(), shared with the overlay draw so eyes and props stay in step. */
+  private ovT = now();
+  /** When the current state was entered (s); the error scene plays once from here. */
+  private stateAt = now();
+
   lastTime = now();
   private t0 = now() - Math.random() * 5;
   private nextBlink = now() + 1.5 + Math.random() * 2;
@@ -315,6 +330,7 @@ export class BotEngine {
     if (this.state === next && !force) return;
     const prev = this.state;
     this.state = next;
+    this.stateAt = now();
     this.cfg = BOT_STATES[next];
     this.colT = this.cfg.color;
     if (!this.locks.has("tint")) this.tint = this.cfg.tint;
@@ -327,6 +343,7 @@ export class BotEngine {
         setTimeout(() => this.emit("spark", 5), 500);
         break;
       case "error":
+        this.emit("sweat", 1);
         this.anim("ox", [
           [0.08, 50, Ease.out], [-0.08, 70, Ease.inOut],
           [0.05, 70, Ease.inOut], [0, 90, Ease.out],
@@ -400,6 +417,29 @@ export class BotEngine {
     this.accTarget = kind;
     this.accessory = kind;
     this.accPresence = kind ? 1 : 0;
+  }
+
+  setActivity(a: Activity | null) {
+    this.activity = a;
+  }
+
+  /** The overlay playing right now (state + activity), before the size/morph guards. */
+  private overlayKind(): OverlayKind | null {
+    if (this.isMini || this.accessory) return null;
+    return overlayFor(this.state, this.activity);
+  }
+
+  /** The overlay that is actually on screen: not mini, big enough, not mid-morph. */
+  private visibleOverlay(R = this.lastR): OverlayKind | null {
+    if (R <= OVERLAY_MIN_R || this.morph > 0.25) return null;
+    return this.overlayKind();
+  }
+
+  /** The error scene is a one-shot: animating only for its first ERROR_END seconds. */
+  private overlayAnimating(): boolean {
+    const kind = this.visibleOverlay();
+    if (!kind) return false;
+    return kind !== "error" || now() - this.stateAt < ERROR_END + 0.1;
   }
 
   blink() {
@@ -618,6 +658,7 @@ export class BotEngine {
     return (
       this.tweens.size > 0 ||
       this.particles.length > 0 ||
+      this.overlayAnimating() ||
       this.cfg.bounces || this.cfg.scans || this.cfg.breathes || this.cfg.zz || this.cfg.sweat ||
       this.isMini ||
       Math.abs(this.tgYaw - this.yaw) > 0.002 ||
@@ -665,14 +706,19 @@ export class BotEngine {
     }
 
     const t = n - this.t0;
-    let ty = this.lookX * 0.62;
-    let tp = this.lookY * 0.5;
+    // Overlay pose: its look beats the mouse look island.ts wrote this frame; the
+    // rest (yaw, pitch, bob, sway) is applied after smoothing, below.
+    const overlay = this.visibleOverlay();
+    this.ovT = n;
+    const pose: Pose | null = overlay ? overlayPose(overlay, n) : null;
+    let ty = (pose?.lookX ?? this.lookX) * 0.62;
+    let tp = (pose?.lookY ?? this.lookY) * 0.5;
 
     if (this.cfg.look) {
       ty = ty * 0.35 + this.cfg.look[0] * 0.55;
       tp = tp * 0.3 + this.cfg.look[1] * 0.5;
     }
-    if (this.cfg.scans) {
+    if (this.cfg.scans && !(overlay && !this.isMini)) {
       ty = Math.sin(t * 2.6) * 0.6;
       tp = -0.06;
     }
@@ -717,6 +763,9 @@ export class BotEngine {
       this.tgSx = 1;
     }
 
+    if (pose?.sy != null) this.tgSy = pose.sy;
+    if (pose?.sx != null) this.tgSx = pose.sx;
+
     if (this.isMini && n > this.miniNextBehavior) this.doMiniBehaviorLoop();
 
     const kLook = 1 - Math.pow(0.0025, dt);
@@ -726,6 +775,13 @@ export class BotEngine {
     if (!this.locks.has("sy")) this.sy += (this.tgSy - this.sy) * kGen;
     if (!this.locks.has("sx")) this.sx += (this.tgSx - this.sx) * kGen;
     if (!this.locks.has("es")) this.es += (this.tgEs - this.es) * kGen;
+
+    if (pose) {
+      if (pose.yaw != null && !this.locks.has("yaw")) this.yaw = pose.yaw;
+      if (pose.pitch != null && !this.locks.has("pitch")) this.pitch = pose.pitch;
+      if (pose.oy != null && !this.locks.has("oy")) this.oy = pose.oy;
+      if (pose.tilt != null && !this.locks.has("tilt")) this.tilt = pose.tilt;
+    }
 
     this.col = mix3(this.col, this.colT, 1 - Math.pow(0.002, dt));
 
@@ -809,7 +865,9 @@ export class BotEngine {
     const cx = W / 2 + this.ox * R;
     const cy = H / 2 + this.particleOverhang / 2 + this.oy * R + R * 0.06;
 
-    this.drawHandsBehind(x, R, rx, ry, cx, cy);
+    this.lastR = R;
+    const overlay = this.visibleOverlay(R);
+    if (!(overlay && overlayHasHands(overlay))) this.drawHandsBehind(x, R, rx, ry, cx, cy);
 
     x.save();
     x.translate(cx, cy);
@@ -840,10 +898,12 @@ export class BotEngine {
 
     x.restore();
 
-    if (this.badge && this.badgeS > 0.01 && this.morph < 0.25) {
+    // The props replace the working/thinking/searching badge on the main Mochi.
+    if (this.badge && this.badgeS > 0.01 && this.morph < 0.25 && !overlay) {
       this.drawBadge(x, this.badge, R, cx, cy);
     }
     this.drawParticles(x, R, cx, cy);
+    if (overlay) drawOverlay(x, overlay, R, cx, cy, this.ovT, this.bodyColor, this.ovT - this.stateAt);
   }
 
   /** Brand prop, one pass. A pure read of engine state; no-op without an accessory. */

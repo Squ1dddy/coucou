@@ -1110,6 +1110,7 @@ export class Island {
     this.engine.bodyColor = focus?.isIntegration ? hexToRGB(focus.color) : null;
     this.engine.setAccessory(focus?.isIntegration ? focus.accessory ?? null : null);
     this.engine.particleOverhang = BOT_OVERHANG;
+    this.engine.setActivity(State.activityOverride ?? focus?.toolAnim ?? null);
     this.engine.lookX = this.lookX();
     this.engine.lookY = this.lookY();
     if (this.engine.morph > 0.3) {

@@ -1,7 +1,7 @@
 // App state — mirror of AppState.swift (the parts the island needs).
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
-import type { EyeShape } from "../mochi/engine";
+import type { Activity, EyeShape } from "../mochi/engine";
 
 export type AgentSource = "claudeCode" | "n8n" | "agent";
 export type AccessoryKind = "headphones" | "calendar";
@@ -45,6 +45,8 @@ export interface AgentTask {
   pendingAgents?: PendingAgent[];
   /** Brand prop Mochi wears (headphones, calendar page). */
   accessory?: AccessoryKind | null;
+  /** What Mochi's working animation shows for the tool in use (Claude Code only); null/absent = typing. */
+  toolAnim?: Activity | null;
 }
 
 /** A subagent a Claude session is running right now. Finished ones are removed. */
@@ -236,6 +238,8 @@ class AppState {
   drillAgentId: string | null = null;
 
   stateOverride: BotStateName | null = null;
+  /** Dev only (window.__coucouAnim): forces the stage Mochi's working animation. */
+  activityOverride: Activity | null = null;
 
   /** Cursor in logical screen pixels, origin top-left (like AppState.mousePosition). */
   mouse = { x: 0, y: 0 };

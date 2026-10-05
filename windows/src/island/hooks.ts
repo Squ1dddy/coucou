@@ -9,6 +9,18 @@ import { shouldCelebrate } from "../core/celebrate";
 import { Sound } from "../core/sound";
 import { State, modelLabel, staleClaudeSessions, type AgentTask, type ClaudeUsage } from "../core/state";
 import type { Island } from "./island";
+import type { Activity } from "../mochi/engine";
+import type { BotStateName } from "../core/layout";
+
+/** Claude Code tool -> the working animation Mochi plays (same tool groups as describeActivity). */
+function toolAnimFor(tool: string): Activity {
+  switch (tool) {
+    case "Read": case "WebFetch": return "reading";
+    case "Bash": case "PowerShell": return "bash";
+    case "Grep": case "Glob": case "LS": case "WebSearch": return "searching";
+    default: return "typing";
+  }
+}
 
 const CLAUDE_ID = "integration_claude";
 
@@ -158,6 +170,15 @@ export function registerHookHandlers(island: Island) {
 
   // Dev only: window.__coucouCelebrate() runs the focused celebration without a 5-minute wait.
   if (import.meta.env.DEV) {
+    // Dev only: window.__coucouAnim("working", "bash") forces the stage Mochi's state and
+    // activity for a visual check; window.__coucouAnim() clears it.
+    (window as unknown as { __coucouAnim?: (s?: BotStateName, a?: Activity | null) => void }).__coucouAnim = (s, a) => {
+      State.stateOverride = s ?? null;
+      State.activityOverride = a ?? null;
+      if (s && State.mode === "hidden") island.reveal();
+      State.notify();
+      island.ensureRunning();
+    };
     (window as unknown as { __coucouCelebrate?: () => void }).__coucouCelebrate = () => {
       if (State.mode === "hidden") island.reveal();
       window.setTimeout(() => island.celebrate(), 350);
@@ -274,6 +295,7 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(agentId, "thinking");
       {
         const t = State.tasks.find((x) => x.id === agentId);
+        if (t) t.toolAnim = null;
         if (t && !isExternalAgent) {
           t.promptAt = Date.now();
           t.celebratePending = false;
@@ -308,6 +330,10 @@ function handleHook(island: Island, payload: HookPayload) {
       ensurePill();
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
+      if (!isExternalAgent) {
+        const t = State.tasks.find((x) => x.id === agentId);
+        if (t) t.toolAnim = toolAnimFor(tool);
+      }
       State.appendStep(agentId, describeActivity(tool, payload.tool_input ?? {}));
       surface("overview", false);
       break;
@@ -350,6 +376,7 @@ function handleHook(island: Island, payload: HookPayload) {
         shouldCelebrate(stopTask.promptAt, Date.now());
       // Off stage: the finish chime and badge as before, the party waits for the focus.
       if (celebrate && !focused && stopTask) stopTask.celebratePending = true;
+      if (stopTask) stopTask.toolAnim = null;
       State.updateTask(agentId, "finished");
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
       if (!(celebrate && focused)) Sound.play("finish");
