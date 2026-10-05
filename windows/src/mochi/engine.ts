@@ -64,8 +64,12 @@ const EYE_W = 0.25;
 const EYE_H = 0.27;
 const EYE_SP = 0.37;
 const EYE_P = -0.12;
-const BASE_TOP: RGB = [0.929, 0.929, 0.937]; // #EDEDEF
-const BASE_BOTTOM: RGB = [0.769, 0.773, 0.792]; // #C4C5CA
+/** Mochi's body: Claude orange. The one source for every canvas that paints Mochi
+ *  (engine body + hands, greeting, upload mailbox), so the morphs never flash. */
+export const MOCHI_TOP_HEX = "#F4B496";
+export const MOCHI_BOTTOM_HEX = "#DE8463";
+const BASE_TOP: RGB = hexToRGB(MOCHI_TOP_HEX);
+const BASE_BOTTOM: RGB = hexToRGB(MOCHI_BOTTOM_HEX);
 const INK = "rgb(26,20,18)"; // #1A1412
 const MINI_INK = "rgb(16,19,26)"; // #10131A
 
@@ -723,14 +727,8 @@ export class BotEngine {
     x.fillStyle = g;
     x.fill(body);
 
-    const effectiveTint = this.tint * (1 - this.morph);
-    if (effectiveTint > 0.01) {
-      const tg = x.createLinearGradient(0, ry, 0, -ry);
-      tg.addColorStop(0, rgba(this.col, 0.72 * effectiveTint));
-      tg.addColorStop(1, rgba(this.col, 0));
-      x.fillStyle = tg;
-      x.fill(body);
-    }
+    // No state-colour wash on the body: over Claude orange, blue and purple turn
+    // muddy grey. The state reads from the badge, the glow and the eyes instead.
 
     const sh = x.createRadialGradient(0, 0, R * 0.15, 0, 0, R * 1.25);
     sh.addColorStop(0, "rgba(0,0,0,0)");

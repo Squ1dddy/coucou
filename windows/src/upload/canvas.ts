@@ -6,6 +6,7 @@
 // exactly as on macOS, because this canvas draws its own.
 
 import { State } from "../core/state";
+import { MOCHI_BOTTOM_HEX, MOCHI_TOP_HEX } from "../mochi/engine";
 import {
   USC, eIn, eInOut, eOut, lerp, progressAt,
   type UploadEyeShape, type UploadFrame,
@@ -303,8 +304,8 @@ export class UploadCanvas {
 
     // Body.
     const bg = ctx.createLinearGradient(rx * 0.7, -ry * 0.9, -rx * 0.8, ry * 0.9);
-    bg.addColorStop(0, "#EDEDEF");
-    bg.addColorStop(1, "#C4C5CA");
+    bg.addColorStop(0, MOCHI_TOP_HEX);
+    bg.addColorStop(1, MOCHI_BOTTOM_HEX);
     ctx.fillStyle = bg;
     ctx.fill();
 

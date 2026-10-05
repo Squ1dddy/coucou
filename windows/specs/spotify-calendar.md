@@ -58,6 +58,17 @@ A wizard script walks Beau through:
 - Spotify dashboard: create app, add redirect URI, copy Client ID.
 - Google Cloud console: create project, enable Calendar API, OAuth consent screen (External), add the calendar.readonly scope, create a Desktop client, copy ID + secret, then **Publish app to "In production"** (unverified is fine; click through "Google hasn't verified this app" once). Without publishing, Google kills the sign-in every 7 days.
 
+## Design language and motion (must match; from studying the engines)
+- **Head model:** superellipse (exponent 2.7), `rx = 1.14R`, `ry = 0.88R`, view tilt -0.30, accessory pitch factor 0.4. Eyes at ±0.37 rad yaw, pitch -0.12. Windows `engine.ts` already uses this model.
+- **Accessories follow the head** through the Mac helpers in `NotchBuddy/Sources/CoucouKit/MochiOutfitDrawing.swift`: `mRingR`, `mRot3`, `mProj`, `mProjRoll`, `mSurf`, `mFrontArc`/`frontSilhouetteArc`, `mCapClip`, `mInvert`. Port them faithfully to `windows/src/mochi/outfit3d.ts`; draw inside the body transform (translate cx,cy → rotate tilt → scale sx,sy) so squash, tilt, look-around and roll all carry the prop. Roll-following items (like glasses) use `mProjRoll` and move to a behind pass when their front faces away (`z < 0`).
+- **Two passes:** behind (before the body: back of the headband, far ear cup) and front (after eyes: near cups, band front, calendar page).
+- **Look:** soft gradients with a light source top-right (white radial highlight at `(0.3rx, -0.85ry)`, alpha ≈0.35); black parts use `#111317`/`#0B0C0F`; strokes are multiples of R (0.035R–0.07R), round caps; soft contact shadow `rgba(30,40,70,0.10)` where a prop meets the head. Detail drops when `R < 16` (the Mac "simplified" rule).
+- **Mini bots** are flat (solid body, no gradient/highlight, `MINI_INK`): props on minis are flat, chunky silhouettes readable at a 13 px body, no gradients, no thin lines.
+- **Motion:** a prop appears with a presence tween (0 → 1 in 350 ms `Ease.inOut`, with `Ease.back` on its scale/offset, like the Mac `hatScale = 0.85 + 0.15·back(p)`), and leaves in 180 ms. It fades out with the upload morph: `1 - clamp((morph - 0.3) / 0.2, 0, 1)`. Prop drawing is a pure function of engine state; it never adds tweens to or changes timing of existing properties (yaw, sx/sy, oy, tilt, roll, morph, badge, particles).
+- **One Mochi colour source:** Mochi is painted in `engine.ts` (body + hands), `greeting.ts` (two body gradients) and `upload/canvas.ts` (the mailbox morph body). All three use one exported pair of colours, or the morphs between canvases flash the old colour.
+- **State tints** (working blue, approval amber, etc.) overlay the body; check every state on the orange body stays readable, and adjust only the base gradient (not tint logic) if one turns muddy.
+- **Preview harness:** `windows/dev/mochi-preview.html` (served by the Vite dev server on :1420) renders big Mochi in every state, the roll/greet/squash animations, and mini bots with and without props, for visual checks without touching the real island.
+
 ## Out of scope
 Discord, Gmail, playlists/search/queue, writing calendar events, multiple calendars, Mac or iPhone changes.
 

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Coucou — Mochi preview</title>
+    <style>
+      body { margin: 0; padding: 16px; background: #0b0c0e; font: 12px system-ui; color: #ddd; }
+      .row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+      .cell { display: flex; flex-direction: column; align-items: center; gap: 4px; background: #16171a; border-radius: 14px; padding: 6px 8px; }
+      .mini-cell { flex-direction: row; gap: 10px; padding: 10px 14px; }
+      .mini { display: inline-flex; align-items: center; justify-content: center; }
+      button { background: #26282d; color: #eee; border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+      h2 { font-size: 13px; margin: 6px 0; color: #999; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div class="row" id="controls"></div>
+    <h2>Big Mochi, every state</h2>
+    <div class="row" id="states"></div>
+    <h2>Big Mochi showing a connector (flat body colour)</h2>
+    <div class="row" id="connectors"></div>
+    <h2>Mini bots (13 px compact grid, 24 px pills)</h2>
+    <div class="row" id="minis"></div>
+    <script type="module" src="./mochi-preview.ts"></script>
+  </body>
+</html>
