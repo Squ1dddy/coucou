@@ -356,7 +356,9 @@ export class BotEngine {
    * the target is unchanged.
    */
   setAccessory(kind: AccessoryName | null, animated = true) {
-    if (kind === this.accTarget && (this.accessory === kind || kind === null)) {
+    // Same target = already there or on its way. Called every frame, so a swap in
+    // flight (old prop still fading out) must not restart its exit tween.
+    if (kind === this.accTarget) {
       if (!animated && this.accPresence !== (kind ? 1 : 0)) this.snapAccessory(kind);
       return;
     }
