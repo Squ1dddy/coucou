@@ -67,8 +67,8 @@ const EYE_SP = 0.37;
 const EYE_P = -0.12;
 /** Mochi's body: Claude orange. The one source for every canvas that paints Mochi
  *  (engine body + hands, greeting, upload mailbox), so the morphs never flash. */
-export const MOCHI_TOP_HEX = "#F4B496";
-export const MOCHI_BOTTOM_HEX = "#DE8463";
+export const MOCHI_TOP_HEX = "#E38C69";
+export const MOCHI_BOTTOM_HEX = "#D2704B";
 const BASE_TOP: RGB = hexToRGB(MOCHI_TOP_HEX);
 const BASE_BOTTOM: RGB = hexToRGB(MOCHI_BOTTOM_HEX);
 const INK = "rgb(26,20,18)"; // #1A1412

@@ -194,16 +194,22 @@ function inPass(z: number, behind: boolean) {
 
 // Headphones ------------------------------------------------------------------
 
-const BAND_S = 1.025;
-const BAND_Z = -0.02;
+const BAND_S = 1.02;
+/** The band's plane leans forward over the crown, so from the default view it sits
+ *  visibly on the head instead of peeking over the back of the silhouette. */
+const BAND_LEAN = 0.32;
+/** Minis: band and cups sit inside the silhouette so they read against the body,
+ *  not against the dark island (black on black vanished). */
+const MINI_BAND_S = 0.9;
+const MINI_CUP_X = 0.8;
 
-function bandPoint(a: number): Vec3 {
+function bandPoint(a: number, scale = BAND_S): Vec3 {
   // Side-to-side great circle (the x-y plane), following the head's superellipse.
   const e = 2 / K_EXP;
   const c = Math.cos(a), s = Math.sin(a);
   const px = (c >= 0 ? 1 : -1) * Math.pow(Math.abs(c), e);
   const py = Math.pow(Math.max(0, s), e);
-  return [px * BAND_S, py * BAND_S, BAND_Z];
+  return [px * scale, py * scale * Math.cos(BAND_LEAN), py * scale * Math.sin(BAND_LEAN)];
 }
 
 function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh: number, r: number) {
@@ -228,7 +234,8 @@ function drawHeadphones(x: CanvasRenderingContext2D, H: MochiH, behind: boolean,
   // Band: polyline of the great circle, split by depth so each pass draws its part.
   const n = 44;
   const pts: P3[] = [];
-  for (let i = 0; i <= n; i++) pts.push(mProjRoll(H, bandPoint((i / n) * Math.PI)));
+  const bandS = flat ? MINI_BAND_S : BAND_S;
+  for (let i = 0; i <= n; i++) pts.push(mProjRoll(H, bandPoint((i / n) * Math.PI, bandS)));
   const bandPath = (dx: number, dy: number) => {
     const p = new Path2D();
     let pen = false;
@@ -252,10 +259,11 @@ function drawHeadphones(x: CanvasRenderingContext2D, H: MochiH, behind: boolean,
   }
 
   // Ear cups: screen-space pads centred on the head's side, straddling the silhouette.
-  const cw = R * (flat ? 0.34 : 0.26);
-  const ch = R * (flat ? 0.5 : 0.46);
+  const cw = R * (flat ? 0.4 : 0.3);
+  const ch = R * (flat ? 0.62 : 0.52);
+  const cupX = flat ? MINI_CUP_X : 1.0;
   for (const sd of [-1, 1]) {
-    const c = mProjRoll(H, [sd * 1.0, 0.06, 0]);
+    const c = mProjRoll(H, [sd * cupX, 0.06, flat ? 0.35 : 0]);
     if (!inPass(c.z, behind)) continue;
     rrect(x, c.x - cw / 2, c.y - ch / 2, cw, ch, cw / 2);
     x.fillStyle = dark;
@@ -300,8 +308,8 @@ function drawCalendar(x: CanvasRenderingContext2D, H: MochiH, behind: boolean, o
   const lr = Math.hypot(mProjRoll(r0, [Math.cos(CAL_LON), 0, -Math.sin(CAL_LON)]).x - p0.x,
     mProjRoll(r0, [Math.cos(CAL_LON), 0, -Math.sin(CAL_LON)]).y - p0.y);
   const lu = Math.hypot(mProjRoll(r0, [0, 1, 0]).x - p0.x, mProjRoll(r0, [0, 1, 0]).y - p0.y);
-  const wPx = R * (o.mini ? 0.7 : 0.62);
-  const hPx = R * (o.mini ? 0.7 : 0.66);
+  const wPx = R * (o.mini ? 0.95 : 0.62);
+  const hPx = R * (o.mini ? 0.95 : 0.66);
   const kx = wPx / lr, ky = hPx / lu;
 
   x.save();
