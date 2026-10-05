@@ -160,7 +160,7 @@ function drawFloatingNotes(x: CanvasRenderingContext2D, R: number, t: number) {
   for (let i = 0; i < 3; i++) {
     const k = (((t - i * (life / 3)) % life) + life) % life / life; // 0…1
     const alpha = k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8;
-    const s = R * 0.13 * (0.85 + 0.15 * Math.sin(k * Math.PI));
+    const s = R * 0.19 * (0.85 + 0.15 * Math.sin(k * Math.PI));
     const nx = Math.sin(k * Math.PI * 2 + i * 2.1) * R * 0.08 + (i - 1) * R * 0.06;
     const ny = R * 0.1 - k * R * 0.55;
 
