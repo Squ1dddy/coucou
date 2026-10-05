@@ -153,16 +153,22 @@ function roundRectPath(x: CanvasRenderingContext2D, X: number, Y: number, W: num
   x.closePath();
 }
 
-/** Three small eighth notes rising from the badge spot, staggered, swaying a
- *  little and fading out (2.4 s each). Drawn in the badge's local frame. */
+/** Two notes rising from the badge spot, one new note every 1.6 s, swaying a
+ *  little and fading out (3.2 s each). Each new note is either a single eighth
+ *  note or a beamed pair, picked per spawn. Drawn in the badge's local frame. */
 function drawFloatingNotes(x: CanvasRenderingContext2D, R: number, t: number) {
-  const life = 2.4;
-  for (let i = 0; i < 3; i++) {
-    const k = (((t - i * (life / 3)) % life) + life) % life / life; // 0…1
+  const life = 3.2;
+  const count = 2;
+  for (let i = 0; i < count; i++) {
+    const local = t - i * (life / count);
+    const cycle = Math.floor(local / life);
+    const k = ((local % life) + life) % life / life; // 0…1
     const alpha = k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8;
-    const s = R * 0.19 * (0.85 + 0.15 * Math.sin(k * Math.PI));
-    const nx = Math.sin(k * Math.PI * 2 + i * 2.1) * R * 0.08 + (i - 1) * R * 0.06;
+    const s = R * 0.24 * (0.85 + 0.15 * Math.sin(k * Math.PI));
+    const nx = Math.sin(k * Math.PI * 2 + i * 2.1) * R * 0.08 + (i - 0.5) * R * 0.08;
     const ny = R * 0.1 - k * R * 0.55;
+    // Stable per spawn: the same note keeps its shape for its whole rise.
+    const beamed = ((cycle * 7 + i * 3) & 3) < 2;
 
     x.save();
     x.translate(nx, ny);
@@ -172,15 +178,37 @@ function drawFloatingNotes(x: CanvasRenderingContext2D, R: number, t: number) {
     x.strokeStyle = "#fff";
     x.lineWidth = s * 0.22;
     x.lineCap = "round";
-    // Head, stem, flag.
-    x.beginPath();
-    x.ellipse(0, 0, s * 0.42, s * 0.3, -0.4, 0, Math.PI * 2);
-    x.fill();
-    x.beginPath();
-    x.moveTo(s * 0.36, -s * 0.08);
-    x.lineTo(s * 0.36, -s * 1.25);
-    x.quadraticCurveTo(s * 0.75, -s * 0.95, s * 0.7, -s * 0.6);
-    x.stroke();
+    if (beamed) {
+      // Two heads, two stems, a thick beam joining the tops.
+      const gap = s * 0.85;
+      x.beginPath();
+      x.ellipse(-gap / 2, 0, s * 0.42, s * 0.3, -0.4, 0, Math.PI * 2);
+      x.fill();
+      x.beginPath();
+      x.ellipse(gap / 2, -s * 0.18, s * 0.42, s * 0.3, -0.4, 0, Math.PI * 2);
+      x.fill();
+      x.beginPath();
+      x.moveTo(-gap / 2 + s * 0.36, -s * 0.08);
+      x.lineTo(-gap / 2 + s * 0.36, -s * 1.2);
+      x.moveTo(gap / 2 + s * 0.36, -s * 0.26);
+      x.lineTo(gap / 2 + s * 0.36, -s * 1.38);
+      x.stroke();
+      x.beginPath();
+      x.lineWidth = s * 0.3;
+      x.moveTo(-gap / 2 + s * 0.36, -s * 1.2);
+      x.lineTo(gap / 2 + s * 0.36, -s * 1.38);
+      x.stroke();
+    } else {
+      // Head, stem, flag.
+      x.beginPath();
+      x.ellipse(0, 0, s * 0.42, s * 0.3, -0.4, 0, Math.PI * 2);
+      x.fill();
+      x.beginPath();
+      x.moveTo(s * 0.36, -s * 0.08);
+      x.lineTo(s * 0.36, -s * 1.25);
+      x.quadraticCurveTo(s * 0.75, -s * 0.95, s * 0.7, -s * 0.6);
+      x.stroke();
+    }
     x.restore();
   }
 }
