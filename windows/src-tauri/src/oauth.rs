@@ -43,10 +43,17 @@ pub struct Provider {
     pub client_secret_key: Option<&'static str>,
     /// Extra query parameters on the authorize URL (e.g. `access_type=offline`).
     pub extra_auth_params: &'static [(&'static str, &'static str)],
+    /// Fixed loopback port for providers whose dashboard wants the exact redirect
+    /// (Spotify rejects a port-less `http://127.0.0.1/callback` as "not secure").
+    /// `None` = any free port (Google desktop clients accept any loopback port).
+    pub fixed_port: Option<u16>,
     pub access_key: &'static str,
     pub refresh_key: &'static str,
     pub expiry_key: &'static str,
 }
+
+/// Register exactly `http://127.0.0.1:43117/callback` in the Spotify dashboard.
+pub const SPOTIFY_PORT: u16 = 43117;
 
 pub const SPOTIFY: Provider = Provider {
     id: "spotify",
@@ -56,6 +63,7 @@ pub const SPOTIFY: Provider = Provider {
     client_id_key: "spotify-client-id",
     client_secret_key: None,
     extra_auth_params: &[],
+    fixed_port: Some(SPOTIFY_PORT),
     access_key: "spotify-access-token",
     refresh_key: "spotify-refresh-token",
     expiry_key: "spotify-token-expiry",
@@ -71,6 +79,7 @@ pub const GOOGLE: Provider = Provider {
     client_id_key: "gcal-client-id",
     client_secret_key: Some("gcal-client-secret"),
     extra_auth_params: &[("access_type", "offline"), ("prompt", "consent")],
+    fixed_port: None,
     access_key: "gcal-access-token",
     refresh_key: "gcal-refresh-token",
     expiry_key: "gcal-token-expiry",
@@ -406,9 +415,9 @@ async fn connect(p: &'static Provider) -> Result<(), String> {
     let client_id = secrets::get(p.client_id_key).ok_or("Enter your Client ID first")?;
     let _guard = ConnectGuard::acquire(p.id).ok_or("A sign-in is already open")?;
 
-    let listener = TcpListener::bind("127.0.0.1:0")
+    let listener = TcpListener::bind(("127.0.0.1", p.fixed_port.unwrap_or(0)))
         .await
-        .map_err(|e| format!("Could not open the sign-in listener: {e}"))?;
+        .map_err(|e| format!("Could not open the sign-in listener (is port {} in use?): {e}", p.fixed_port.unwrap_or(0)))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect = format!("http://127.0.0.1:{port}/callback");
 

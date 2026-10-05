@@ -197,7 +197,7 @@ say "Spotify only lets an app sign in people it knows, so you register your own.
 open_url "https://developer.spotify.com/dashboard"
 step "Log in with your Spotify (Premium) account and accept the developer terms if asked."
 step "Click 'Create app'. Name: Coucou. Description: Mochi notch app, personal use."
-step "Redirect URIs: add exactly  http://127.0.0.1/callback  (no port, not 'localhost'). Click Add."
+step "Redirect URIs: add exactly  http://127.0.0.1:43117/callback  (not 'localhost'). Click Add."
 step "Under 'Which API/SDKs are you planning to use?' tick 'Web API'."
 step "Tick the terms box and click Save."
 pause
