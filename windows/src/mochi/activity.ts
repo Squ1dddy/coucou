@@ -30,13 +30,14 @@ export function drawActivity(
 function drawBubble(x: CanvasRenderingContext2D, R: number, ry: number, s: number, t: number) {
   // Anchor on the head's upper right; trail circles rise up and to the right.
   x.save();
-  x.translate(0.55 * R, -ry * 0.92);
+  // Lowered so the cloud fits the island canvas (it was clipped at the top).
+  x.translate(0.6 * R, -ry * 0.78);
   x.scale(s, s);
   const trail: [number, number, number][] = [
-    [0.04, -0.06, 0.07], [0.2, -0.24, 0.1], [0.38, -0.46, 0.14],
+    [0.04, -0.04, 0.06], [0.14, -0.18, 0.08], [0.24, -0.34, 0.11],
   ];
-  const cloudX = 0.5 * R;
-  const cloudY = -0.98 * R;
+  const cloudX = 0.38 * R;
+  const cloudY = -0.66 * R;
   const circles: [number, number, number][] = [
     [-0.27, 0.05, 0.2], [0, -0.06, 0.25], [0.27, 0.05, 0.2],
   ];
