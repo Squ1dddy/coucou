@@ -190,14 +190,17 @@ function inPass(z: number, behind: boolean) {
   return behind ? z < 0 : z >= 0;
 }
 
-// Earphones (the Spotify prop; kind "headphones") ------------------------------
+// Headphones (the Spotify prop) ------------------------------------------------
 //
-// Flat 2D in-ear monitors: a black dot at each ear and a coiled cable from each
-// running down the cheeks to a Y join under the chin, then one tail. Mochi's head
-// is too wide for over-ear headphones. Anchors are head-local points projected
-// through the 3D head, so buds and cable turn, tilt, squash and roll with it.
+// Flat 2D headphones resting around the neck, on Mochi's imaginary shoulders:
+// the band hangs behind and peeks out under the chin, the two cups sit angled at
+// the lower sides of the body. (Over the head looked wrong; the head is too
+// wide.) Anchors are head-local points projected through the 3D head, so the
+// prop still turns, tilts, squashes and rolls with Mochi.
 
-const IEM = "#1C1D22";
+const HP = "#2A2C33";
+const HP_PAD = "#474A54";
+type V3 = [number, number, number];
 
 function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh: number, r: number) {
   const rr = Math.max(0, Math.min(r, W / 2, Hh / 2));
@@ -210,70 +213,49 @@ function rrect(x: CanvasRenderingContext2D, X: number, Y: number, W: number, Hh:
   x.closePath();
 }
 
-type V3 = [number, number, number];
-
-/** Cubic Bezier in screen space, sampled; optionally coiled (a small sine offset
- *  perpendicular to the path, which reads as a curly cable at island size). */
-function cable(
-  x: CanvasRenderingContext2D, a: P3, b: P3, c: P3, d: P3, coil: number, turns: number,
-) {
-  const n = 48;
-  x.beginPath();
-  for (let i = 0; i <= n; i++) {
-    const t = i / n, u = 1 - t;
-    const px = u * u * u * a.x + 3 * u * u * t * b.x + 3 * u * t * t * c.x + t * t * t * d.x;
-    const py = u * u * u * a.y + 3 * u * u * t * b.y + 3 * u * t * t * c.y + t * t * t * d.y;
-    const tx = 3 * u * u * (b.x - a.x) + 6 * u * t * (c.x - b.x) + 3 * t * t * (d.x - c.x);
-    const ty = 3 * u * u * (b.y - a.y) + 6 * u * t * (c.y - b.y) + 3 * t * t * (d.y - c.y);
-    const len = Math.hypot(tx, ty) || 1;
-    // Taper the coil to zero at both ends so it meets the bud and the join cleanly.
-    const off = coil * Math.sin(t * Math.PI * 2 * turns) * Math.sin(t * Math.PI);
-    const qx = px + (-ty / len) * off, qy = py + (tx / len) * off;
-    if (i === 0) x.moveTo(qx, qy);
-    else x.lineTo(qx, qy);
-  }
-  x.stroke();
-}
-
 function drawHeadphones(x: CanvasRenderingContext2D, H: MochiH, behind: boolean, o: AccessoryOpts) {
   const R = H.R;
   const mini = o.mini;
   const P = (p: V3) => mProjRoll(H, p);
-  const join = P([0, -0.86, 0.6]);
-  const tail = P([0, -1.2, 0.6]);
+  // Minis keep everything inside the silhouette so it reads at 13-24 px.
+  const cx = mini ? 0.62 : 0.8;
+  const cy = mini ? -0.6 : -0.74;
+  const left = P([-cx, cy, 0.5]);
+  const right = P([cx, cy, 0.5]);
+  const cw = R * (mini ? 0.44 : 0.34);
+  const ch = R * (mini ? 0.62 : 0.5);
 
   x.save();
   x.scale(o.scale, o.scale);
-  x.strokeStyle = IEM;
-  x.fillStyle = IEM;
   x.lineCap = "round";
-  x.lineJoin = "round";
-  x.lineWidth = R * (mini ? 0.11 : 0.045);
 
-  for (const sd of [-1, 1]) {
-    const bud = P([sd * 0.9, 0.02, 0.4]);
-    if (!inPass(bud.z, behind)) continue;
-    // Down the cheek, then across the lower face to the chin, so the cable reads
-    // against the body rather than vanishing on the dark island.
-    cable(
-      x, bud, P([sd * 0.84, -0.62, 0.5]), P([sd * 0.34, -0.86, 0.6]), join,
-      mini ? 0 : R * 0.035, 7,
-    );
+  // Band: behind the body, a U from cup to cup dipping under the chin.
+  if (behind) {
+    const dip = R * (mini ? 0.42 : 0.62);
     x.beginPath();
-    x.arc(bud.x, bud.y, R * (mini ? 0.17 : 0.09), 0, Math.PI * 2);
-    x.fill();
-  }
-  if (inPass(join.z, behind)) {
-    x.beginPath();
-    x.moveTo(join.x, join.y);
-    x.lineTo(tail.x, tail.y);
+    x.moveTo(left.x, left.y);
+    x.bezierCurveTo(left.x, left.y + dip, right.x, right.y + dip, right.x, right.y);
+    x.strokeStyle = HP;
+    x.lineWidth = R * (mini ? 0.2 : 0.13);
     x.stroke();
+  }
+
+  // Cups: in front, tilted outward like they're resting on the shoulders.
+  for (const [c, sd] of [[left, -1], [right, 1]] as const) {
+    if (!inPass(c.z, behind) || behind) continue;
+    x.save();
+    x.translate(c.x, c.y);
+    x.rotate(sd * 0.55);
+    rrect(x, -cw / 2, -ch / 2, cw, ch, cw * 0.48);
+    x.fillStyle = HP;
+    x.fill();
     if (!mini) {
-      // The Y-splitter bead.
-      x.beginPath();
-      x.arc(join.x, join.y, R * 0.05, 0, Math.PI * 2);
+      // The ear cushion, facing up and inward.
+      rrect(x, -cw * 0.3, -ch * 0.42, cw * 0.6, ch * 0.34, ch * 0.17);
+      x.fillStyle = HP_PAD;
       x.fill();
     }
+    x.restore();
   }
   x.restore();
 }
