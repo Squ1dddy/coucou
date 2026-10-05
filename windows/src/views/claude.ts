@@ -1,10 +1,9 @@
-// Claude detail panel: what the session is doing, the plan limits, Open Claude.
+// Claude detail panel: what the session is doing, its subagents, the plan limits.
 // Shown for every Claude Code entry (the main one and each extra session).
 
 import { h, dot, svg } from "./dom";
 import { ICONS } from "./icons";
 import { State, type AgentTask, type ClaudeLimit, type Subagent } from "../core/state";
-import { Bridge } from "../core/bridge";
 import { createMiniBot, miniBotLive } from "../mochi/minibots";
 
 /** What the panel needs from the island to open and close the subagent view. */
@@ -174,8 +173,6 @@ export function renderClaudePanel(task: AgentTask, hooks: ClaudePanelHooks): HTM
   if (claudeActive(task)) {
     const headline = claudeHeadline(task);
     top.append(h("div", { class: "cl-head", text: headline }));
-    const fact = task.promptAt ? `${headline} · ${elapsedText(task.promptAt, now)}` : headline;
-    top.append(h("div", { class: "cl-fact", text: fact }));
   } else if (task.steps.length > 0) {
     let ago = "";
     if (task.updatedAt) {
@@ -188,8 +185,8 @@ export function renderClaudePanel(task: AgentTask, hooks: ClaudePanelHooks): HTM
     top.append(h("div", { class: "cl-fact idle", text: "No session running" }));
   }
 
-  // Top line up top, limits + Open Claude pinned to the bottom, so nothing jumps
-  // when a session starts.
+  // Top line up top, limits pinned to the bottom, so nothing jumps when a
+  // session starts.
   const bottom = h("div", { class: "cl-bottom" });
   const row = subsRow(task, hooks);
   const card = h("div", { class: row ? "int-card cl has-subs" : "int-card cl" }, top);
@@ -198,17 +195,5 @@ export function renderClaudePanel(task: AgentTask, hooks: ClaudePanelHooks): HTM
   card.append(bottom);
   const bars = limits(task.color, now);
   if (bars) bottom.append(bars);
-  bottom.append(
-    h(
-      "div",
-      { class: "int-actions" },
-      h("button", {
-        class: "link-btn",
-        style: `color:${task.color}b3`,
-        text: "Open Claude",
-        onclick: () => void Bridge.openSession(task.sessionCwd ?? null),
-      }),
-    ),
-  );
   return card;
 }
