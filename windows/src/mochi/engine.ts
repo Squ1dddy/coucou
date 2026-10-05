@@ -154,6 +154,38 @@ function roundRectPath(x: CanvasRenderingContext2D, X: number, Y: number, W: num
   x.closePath();
 }
 
+/** Three small eighth notes rising from the badge spot, staggered, swaying a
+ *  little and fading out (2.4 s each). Drawn in the badge's local frame. */
+function drawFloatingNotes(x: CanvasRenderingContext2D, R: number, t: number) {
+  const life = 2.4;
+  for (let i = 0; i < 3; i++) {
+    const k = (((t - i * (life / 3)) % life) + life) % life / life; // 0…1
+    const alpha = k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8;
+    const s = R * 0.13 * (0.85 + 0.15 * Math.sin(k * Math.PI));
+    const nx = Math.sin(k * Math.PI * 2 + i * 2.1) * R * 0.08 + (i - 1) * R * 0.06;
+    const ny = R * 0.1 - k * R * 0.55;
+
+    x.save();
+    x.translate(nx, ny);
+    x.rotate(-0.15 + 0.1 * Math.sin(k * Math.PI * 2 + i));
+    x.globalAlpha = 0.8 * Math.max(0, Math.min(1, alpha));
+    x.fillStyle = "#fff";
+    x.strokeStyle = "#fff";
+    x.lineWidth = s * 0.22;
+    x.lineCap = "round";
+    // Head, stem, flag.
+    x.beginPath();
+    x.ellipse(0, 0, s * 0.42, s * 0.3, -0.4, 0, Math.PI * 2);
+    x.fill();
+    x.beginPath();
+    x.moveTo(s * 0.36, -s * 0.08);
+    x.lineTo(s * 0.36, -s * 1.25);
+    x.quadraticCurveTo(s * 0.75, -s * 0.95, s * 0.7, -s * 0.6);
+    x.stroke();
+    x.restore();
+  }
+}
+
 function heartPath(x: CanvasRenderingContext2D, s: number) {
   x.beginPath();
   x.moveTo(0, s * 0.38);
@@ -1129,7 +1161,10 @@ export class BotEngine {
     x.scale(bs, bs);
     const col = rgba(badge.color);
 
-    if (badge.kind === "dots") {
+    if (badge.kind === "dots" && this.accessory === "headphones") {
+      // Music playing: small notes drift up and fade instead of the working dot.
+      drawFloatingNotes(x, R, t);
+    } else if (badge.kind === "dots") {
       if (this.isMini) {
         const phase = (t * 2.4) % 1;
         const dotR = R * 0.22 * (1 + 0.25 * Math.sin(phase * Math.PI * 2));

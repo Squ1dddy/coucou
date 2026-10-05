@@ -715,7 +715,19 @@ async fn poll_spotify(app: AppHandle) {
         }
         401 => oauth::forget_access_token(&oauth::SPOTIFY), // stale: the next tick refreshes
         429 => spotify_update(&app, json!({}), Some("Spotify is rate limiting, retrying".into())),
-        _ => spotify_update(&app, json!({}), Some(format!("Spotify error {code}"))),
+        _ => {
+            // Spotify explains refusals in `error.message` (e.g. a dev-mode user
+            // missing from the allowlist): keep it rather than a bare code.
+            let body: Value = response.json().await.unwrap_or(json!({}));
+            let reason = body.pointer("/error/message").and_then(Value::as_str).unwrap_or("");
+            log::line(format!("Spotify currently-playing HTTP {code}: {reason}"));
+            let message = if reason.is_empty() {
+                format!("Spotify error {code}")
+            } else {
+                format!("Spotify error {code}: {reason}")
+            };
+            spotify_update(&app, json!({}), Some(message));
+        }
     }
 }
 
@@ -775,6 +787,8 @@ pub async fn spotify_control(app: AppHandle, action: &str) -> Result<(), String>
     let response = client()
         .request(method, format!("{SPOTIFY_API}/{path}"))
         .bearer_auth(&token)
+        // Spotify answers 411 to a body-less PUT/POST without Content-Length.
+        .header(reqwest::header::CONTENT_LENGTH, "0")
         .send()
         .await
         .map_err(|_| "No connection".to_string())?;

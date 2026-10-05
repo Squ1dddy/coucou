@@ -43,6 +43,11 @@ for (const t of INTEGRATION_AGENTS) {
 }
 // Default orange Mochi wearing each prop.
 bigBot(connectors, "Mochi + headphones", (e) => { e.setAccessory("headphones", false); e.setState("idle", true); });
+bigBot(connectors, "Spotify playing", (e) => {
+  e.bodyColor = hexToRGB(INTEGRATION_AGENTS.find((t) => t.id === "integration_spotify")!.color);
+  e.setAccessory("headphones", false);
+  e.setState("working", true);
+});
 bigBot(connectors, "Mochi + calendar", (e) => { e.setAccessory("calendar", false); e.setState("idle", true); });
 
 // Activity row: big orange Mochi working, one prop each. "Cycle activity" rotates them.
@@ -67,7 +72,7 @@ for (const size of [13, 24]) {
   const cell = document.createElement("div");
   cell.className = "cell mini-cell";
   for (const t of INTEGRATION_AGENTS) {
-    const task: AgentTask = { ...t, state: t.id === "integration_claude" ? "working" : "idle" };
+    const task: AgentTask = { ...t, state: t.id === "integration_claude" || t.id === "integration_spotify" ? "working" : "idle" };
     cell.append(createMiniBot(task, size));
   }
   minis.append(cell);
