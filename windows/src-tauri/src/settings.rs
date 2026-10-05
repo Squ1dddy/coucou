@@ -21,14 +21,6 @@ pub struct Settings {
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
-    /// A local Ollama rewrites Claude's activity text into a friendly headline.
-    /// On by default, also for a settings.json written before this existed.
-    #[serde(default = "default_true")]
-    pub friendly_activity: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_model() -> String {
@@ -50,7 +42,6 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
-            friendly_activity: true,
         }
     }
 }
@@ -78,17 +69,4 @@ pub fn save(settings: &Settings) -> std::io::Result<()> {
     let json = serde_json::to_vec_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     std::fs::write(settings_path(), json)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn old_settings_file_gets_friendly_activity_on() {
-        let old = r#"{"soundEnabled":true,"soundVolume":0.1,"autoCloseInterval":15,"absenceInterval":180,
-            "activeIntegrations":[],"screen":"primary","autostart":false,"hooksInstalled":false}"#;
-        let s: Settings = serde_json::from_str(old).unwrap();
-        assert!(s.friendly_activity);
-    }
 }

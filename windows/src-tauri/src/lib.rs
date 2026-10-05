@@ -10,7 +10,7 @@ mod log;
 mod oauth;
 mod pipe;
 mod platform;
-mod rewrite;
+mod transcript;
 mod secrets;
 mod settings;
 mod tray;
@@ -460,10 +460,7 @@ pub fn run() {
             oauth::oauth_cancel,
             spotify_control,
             spotify_volume,
-            rewrite::rewrite_activity,
-            rewrite::ollama_warm,
-            rewrite::last_assistant_text,
-            rewrite::session_title,
+            transcript::session_title,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

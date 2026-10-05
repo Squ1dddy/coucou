@@ -473,10 +473,6 @@ function generalSection(): HTMLElement {
       h("label", { text: "Launch at startup" }),
       toggle(settings.autostart, (v) => { settings.autostart = v; void save(); }),
     ),
-    h("div", { class: "row" },
-      h("label", { text: "Friendly activity text (Ollama)" }),
-      toggle(settings.friendlyActivity, (v) => { settings.friendlyActivity = v; void save(); }),
-    ),
   );
 }
 
