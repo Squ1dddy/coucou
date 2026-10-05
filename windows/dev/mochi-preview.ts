@@ -4,7 +4,6 @@
 import { BotEngine, hexToRGB } from "../src/mochi/engine";
 import { createMiniBot, tickMiniBots } from "../src/mochi/minibots";
 import { INTEGRATION_AGENTS, type AccessoryKind, type AgentTask } from "../src/core/state";
-import type { ActivityKind } from "../src/mochi/activity";
 import type { BotStateName } from "../src/core/layout";
 
 const STATES: BotStateName[] = [
@@ -50,23 +49,6 @@ bigBot(connectors, "Spotify playing", (e) => {
 });
 bigBot(connectors, "Mochi + calendar", (e) => { e.setAccessory("calendar", false); e.setState("idle", true); });
 
-// Activity row: big orange Mochi working, one prop each. "Cycle activity" rotates them.
-const ACTIVITIES: ActivityKind[] = ["thinking", "typing", "searching"];
-const activityBots: { engine: BotEngine; idx: number }[] = [];
-const activityRow = document.createElement("div");
-activityRow.id = "activity";
-activityRow.className = "row";
-const activityTitle = document.createElement("h2");
-activityTitle.textContent = "Activity";
-document.getElementById("connectors")!.after(activityTitle, activityRow);
-ACTIVITIES.forEach((kind, i) => {
-  bigBot(activityRow, kind, (e) => {
-    e.setState("working", true);
-    e.setActivity(kind, false);
-    activityBots.push({ engine: e, idx: i });
-  });
-});
-
 const minis = document.getElementById("minis")!;
 for (const size of [13, 24]) {
   const cell = document.createElement("div");
@@ -96,17 +78,6 @@ actions.push(["Props on/off", (e) => {
   const kind = propKinds.get(e) ?? null;
   e.setAccessory(propsOn ? null : kind, true);
 }]);
-{
-  const b = document.createElement("button");
-  b.textContent = "Cycle activity";
-  b.onclick = () => {
-    for (const a of activityBots) {
-      a.idx = (a.idx + 1) % ACTIVITIES.length;
-      a.engine.setActivity(ACTIVITIES[a.idx], true);
-    }
-  };
-  controls.append(b);
-}
 for (const [label, fn] of actions) {
   const b = document.createElement("button");
   b.textContent = label;

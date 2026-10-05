@@ -8,7 +8,6 @@ import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
 import { drawAccessory, makeH, type AccessoryName } from "./outfit3d";
-import { drawActivity, type ActivityKind } from "./activity";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -38,7 +37,7 @@ interface Tween {
 
 type PropKey =
   | "yaw" | "pitch" | "roll" | "tilt" | "open" | "sx" | "sy"
-  | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS" | "accPresence" | "actPresence";
+  | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS" | "accPresence";
 
 interface BotStateCfg {
   color: RGB;
@@ -224,14 +223,6 @@ export class BotEngine {
   accPresence = 0;
   private accTarget: AccessoryName | null = null;
 
-  /** Work prop (thought bubble, laptop, magnifier); null = none. Big Mochi only. */
-  activity: ActivityKind | null = null;
-  /** 0…1 presence of the work prop; drives its scale and opacity. */
-  actPresence = 0;
-  private actTarget: ActivityKind | null = null;
-  /** 0…1 follows "is the state a working one"; fades the prop out in other states. */
-  private actStateFade = 0;
-
   // Targets
   tgYaw = 0; tgPitch = 0; tgTilt = 0; tgSy = 1; tgSx = 1; tgEs = 1;
 
@@ -359,40 +350,6 @@ export class BotEngine {
       if (!this.accessory) this.accPresence = 0;
       enter(kind);
     }
-  }
-
-  /** Same timings as setAccessory: 350 ms in, 180 ms out, switching = out then in. */
-  setActivity(kind: ActivityKind | null, animated = true) {
-    if (kind === this.actTarget && (this.activity === kind || kind === null)) {
-      if (!animated && this.actPresence !== (kind ? 1 : 0)) this.snapActivity(kind);
-      return;
-    }
-    this.actTarget = kind;
-    if (!animated) { this.snapActivity(kind); return; }
-
-    const enter = (k: ActivityKind) => {
-      this.activity = k;
-      this.anim("actPresence", [[1, 350, Ease.inOut]]);
-    };
-    if (this.activity && this.activity !== kind) {
-      this.anim("actPresence", [[0, 180, Ease.inOut]], () => {
-        if (this.actTarget === kind) {
-          this.activity = null;
-          if (kind) { this.actPresence = 0; enter(kind); }
-        }
-      });
-    } else if (kind) {
-      if (!this.activity) this.actPresence = 0;
-      enter(kind);
-    }
-  }
-
-  private snapActivity(kind: ActivityKind | null) {
-    this.tweens.delete("actPresence");
-    this.locks.delete("actPresence");
-    this.actTarget = kind;
-    this.activity = kind;
-    this.actPresence = kind ? 1 : 0;
   }
 
   private snapAccessory(kind: AccessoryName | null) {
@@ -633,12 +590,6 @@ export class BotEngine {
       }
     }
 
-    if (this.activity) {
-      const on = this.state === "working" || this.state === "thinking" || this.state === "searching";
-      const step = dt / 0.18;
-      this.actStateFade = on ? Math.min(1, this.actStateFade + step) : Math.max(0, this.actStateFade - step);
-    }
-
     const t = n - this.t0;
     let ty = this.lookX * 0.62;
     let tp = this.lookY * 0.5;
@@ -811,7 +762,6 @@ export class BotEngine {
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
     this.drawAccessoryPass(x, R, false);
-    this.drawActivityPass(x, R, rx, ry);
 
     x.restore();
 
@@ -836,20 +786,6 @@ export class BotEngine {
       scale: 0.85 + 0.15 * Ease.back(p),
       miniInk: MINI_INK,
     });
-    x.restore();
-  }
-
-  /** Work prop, a pure read of engine state; no-op without an activity or on minis. */
-  private drawActivityPass(x: CanvasRenderingContext2D, R: number, rx: number, ry: number) {
-    const kind = this.activity;
-    if (!kind || this.isMini) return;
-    const p = Math.min(1, Math.max(0, this.actPresence));
-    const morphFade = 1 - Math.min(1, Math.max(0, (this.morph - 0.3) / 0.2));
-    const alpha = morphFade * this.actStateFade * Math.min(1, p * 2.5);
-    if (alpha <= 0.005) return;
-    x.save();
-    x.globalAlpha = alpha;
-    drawActivity(x, kind, R, rx, ry, 0.85 + 0.15 * Ease.back(p), performance.now());
     x.restore();
   }
 
