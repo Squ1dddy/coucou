@@ -42,6 +42,7 @@ export function createMiniBot(task: AgentTask, bodySize: number): HTMLElement {
   engine.isMini = true;
   engine.bodyColor = hexToRGB(task.color);
   engine.setAccessory(task.accessory ?? null, false);
+  engine.setActivity(task.toolAnim ?? null);
   engine.setState(task.state, true);
   if (task.emote) engine.setPermanentEmote(task.emote);
   if (task.miniEye) {
@@ -80,6 +81,7 @@ export function syncMiniBotStates(tasks: AgentTask[]) {
   for (const mb of live.values()) {
     const task = tasks.find((t) => t.id === mb.taskId);
     if (!task) continue;
+    mb.engine.setActivity(task.toolAnim ?? null);
     mb.engine.setState(task.state);
     mb.engine.bodyColor = hexToRGB(task.color);
     mb.engine.setAccessory(task.accessory ?? null, false);

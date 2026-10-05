@@ -430,6 +430,194 @@ function drawSleeping(x: CanvasRenderingContext2D, R: number, cx: number, cy: nu
   x.restore();
 }
 
+// ── Mini Mochis ──────────────────────────────────────────────────────────────
+// Simplified props for the small bots (pills, compact grid, subagent row, flyer):
+// no hands, no particles, no trail. Everything is a function of R (the body
+// radius; the canvas is 3.33 R square, so the free margin is ~0.5 R at the sides
+// and ~0.8 R above the body) and stays inside the canvas. Stroke widths have a
+// floor in px so a 13 px bot still shows a readable shape.
+
+/** Overlay kinds a mini can show (no fidgets; those never run on minis). */
+export function isMiniPropKind(kind: OverlayKind | null): boolean {
+  return kind != null && kind !== "hum" && kind !== "ball";
+}
+
+const lw = (v: number, min: number) => Math.max(v, min);
+
+function miniCloud(
+  x: CanvasRenderingContext2D, px: number, py: number, R: number, fill: string, puffs: Puffs = CLOUD_SMALL,
+) {
+  cloud(x, px, py, R * 0.026, fill, puffs);
+}
+
+function miniTyping(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  const bob = Math.abs(Math.sin(t * 10.5)) * R * 0.03;
+  const lidW = R * 1.5, lidH = R * 0.55, lidY = cy + R * 0.42 - bob;
+  x.fillStyle = "#2a2d34";
+  x.beginPath();
+  x.roundRect(cx - lidW / 2, lidY, lidW, lidH, R * 0.1);
+  x.fill();
+  // Blinking cursor line on the screen.
+  if (Math.floor(t * 2.5) % 2) {
+    x.fillStyle = "#7BE495";
+    x.fillRect(cx - lidW * 0.32, lidY + lidH * 0.4, lw(R * 0.4, 1.5), lw(R * 0.1, 1));
+  }
+  x.fillStyle = "#3a3e47";
+  x.beginPath();
+  x.roundRect(cx - R * 1.0, lidY + lidH + R * 0.04, R * 2.0, lw(R * 0.2, 1.5), R * 0.08);
+  x.fill();
+}
+
+function miniReading(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  const pw = R * 1.1, ph = R * 0.85, py = cy + R * 0.95;
+  x.save();
+  x.translate(cx, py);
+  x.scale(1 - Math.abs(Math.sin(t * 1.4)) * 0.08, 1);
+  x.fillStyle = "#f4f1ea";
+  x.beginPath();
+  x.roundRect(-pw / 2, -ph / 2, pw, ph, R * 0.1);
+  x.fill();
+  x.fillStyle = "#b8b3a8";
+  const lh = lw(R * 0.1, 1);
+  for (let i = 0; i < 3; i++) {
+    x.fillRect(-pw / 2 + pw * 0.15, -ph / 2 + ph * (0.2 + i * 0.27), pw * (i === 2 ? 0.4 : 0.7), lh);
+  }
+  x.restore();
+}
+
+function miniBash(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  const tw = R * 1.5, th = R * 1.0, tx = cx - tw / 2, ty = cy + R * 0.5;
+  x.fillStyle = "#0d1117";
+  x.strokeStyle = "#4a505a";
+  x.lineWidth = lw(R * 0.07, 0.8);
+  x.beginPath();
+  x.roundRect(tx, ty, tw, th, R * 0.1);
+  x.fill();
+  x.stroke();
+  const lh = lw(R * 0.12, 1.1);
+  x.fillStyle = "#7BE495";
+  x.fillRect(tx + tw * 0.14, ty + th * 0.28, tw * 0.5, lh);
+  x.fillStyle = "#3fb56a";
+  x.fillRect(tx + tw * 0.14, ty + th * 0.55, tw * 0.3, lh);
+  if (Math.floor(t * 2.5) % 2) {
+    x.fillStyle = "#7BE495";
+    x.fillRect(tx + tw * 0.5, ty + th * 0.55, lw(R * 0.2, 1.5), lh);
+  }
+}
+
+function miniSearching(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  const gx = cx + Math.sin(t * 1.6) * R * 0.5, gy = cy + R * 0.1, lr = R * 0.38;
+  x.lineCap = "round";
+  x.strokeStyle = "#8a6038";
+  x.lineWidth = lw(R * 0.16, 1.6);
+  x.beginPath();
+  x.moveTo(gx + lr * 0.7, gy + lr * 0.7);
+  x.lineTo(gx + lr * 1.6, gy + lr * 1.6);
+  x.stroke();
+  x.fillStyle = "rgba(180,220,255,0.3)";
+  x.beginPath();
+  x.arc(gx, gy, lr, 0, Math.PI * 2);
+  x.fill();
+  x.strokeStyle = "#cfd6df";
+  x.lineWidth = lw(R * 0.12, 1.3);
+  x.stroke();
+}
+
+function miniThinking(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  miniCloud(x, cx + R * 0.95, cy - R * 1.15 + Math.sin(t * 1.6) * R * 0.05, R, "#f2f2f2");
+}
+
+function miniApproval(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  const px = cx + R * 1.0, b = Math.abs(Math.sin(t * 5)) * R * 0.08;
+  const w = lw(R * 0.24, 1.8);
+  x.fillStyle = AMBER;
+  x.beginPath();
+  x.roundRect(px - w / 2, cy - R * 1.55 - b, w, R * 0.62, w / 2);
+  x.fill();
+  x.beginPath();
+  x.arc(px, cy - R * 0.68 - b, w * 0.6, 0, Math.PI * 2);
+  x.fill();
+}
+
+function miniQuestion(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  const px = cx + R * 1.0, py = cy - R * 1.1;
+  const w = lw(R * 0.22, 1.5), r = R * 0.26;
+  x.save();
+  x.translate(px, py);
+  x.rotate(Math.sin(t * 3.5) * 0.15);
+  x.strokeStyle = CYAN;
+  x.fillStyle = CYAN;
+  x.lineWidth = w;
+  x.lineCap = "round";
+  x.beginPath();
+  x.arc(0, -r * 0.6, r, Math.PI * 1.05, Math.PI * 2.55);
+  x.lineTo(0, r * 0.7);
+  x.stroke();
+  x.beginPath();
+  x.arc(0, r * 1.5, w * 0.6, 0, Math.PI * 2);
+  x.fill();
+  x.restore();
+}
+
+/** One-shot like the main one: only for the first ERROR_END seconds, then nothing. */
+function miniError(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, k: number) {
+  if (k <= 0.35 || k >= ERROR_END) return;
+  x.globalAlpha = Math.min(1, (k - 0.35) / 0.3) * Math.min(1, (ERROR_END - k) / 0.4);
+  miniCloud(x, cx + R * 0.95, cy - R * 1.15, R, "#5b6170");
+}
+
+function miniRatelimit(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  const bx = cx + R * 0.35, by = cy - R * 1.5, bw = R * 1.1, bh = R * 0.55;
+  const w = lw(R * 0.1, 1);
+  x.strokeStyle = "#cfd6df";
+  x.lineWidth = w;
+  x.strokeRect(bx, by, bw, bh);
+  x.fillStyle = "#cfd6df";
+  x.fillRect(bx + bw, by + bh * 0.3, lw(R * 0.1, 1), bh * 0.4);
+  x.fillStyle = Math.floor(t * 1.5) % 2 ? "#F4505E" : "#b5434d";
+  x.fillRect(bx + w, by + w, (bw - 2 * w) * 0.2, bh - 2 * w);
+}
+
+function miniSleeping(x: CanvasRenderingContext2D, R: number, cx: number, cy: number) {
+  x.translate(cx - R * 0.1, cy - R * 0.78);
+  x.rotate(0.35);
+  x.fillStyle = "#5a6bd8";
+  x.beginPath();
+  x.moveTo(-R * 0.55, 0);
+  x.quadraticCurveTo(R * 0.2, -R * 0.9, R * 0.95, -R * 0.15);
+  x.lineTo(R * 0.55, 0);
+  x.closePath();
+  x.fill();
+  x.fillStyle = "#e8ecff";
+  const bh = lw(R * 0.2, 1.4);
+  x.beginPath();
+  x.roundRect(-R * 0.62, -bh * 0.45, R * 1.24, bh, bh / 2);
+  x.fill();
+  x.beginPath();
+  x.arc(R * 0.98, -R * 0.12, lw(R * 0.14, 1.2), 0, Math.PI * 2);
+  x.fill();
+}
+
+/** Draws a mini's simplified prop. `k` = seconds since the state began (error one-shot only). */
+export function drawMiniProp(
+  x: CanvasRenderingContext2D, kind: OverlayKind, R: number, cx: number, cy: number, t: number, k = 0,
+) {
+  x.save();
+  switch (kind) {
+    case "typing": miniTyping(x, R, cx, cy, t); break;
+    case "reading": miniReading(x, R, cx, cy, t); break;
+    case "bash": miniBash(x, R, cx, cy, t); break;
+    case "searching": miniSearching(x, R, cx, cy, t); break;
+    case "thinking": miniThinking(x, R, cx, cy, t); break;
+    case "approval": miniApproval(x, R, cx, cy, t); break;
+    case "question": miniQuestion(x, R, cx, cy, t); break;
+    case "error": miniError(x, R, cx, cy, k); break;
+    case "ratelimit": miniRatelimit(x, R, cx, cy, t); break;
+    case "sleeping": miniSleeping(x, R, cx, cy); break;
+  }
+  x.restore();
+}
+
 /** Draws one overlay in world coordinates, after the body and particles.
  *  `k` = seconds since the state was entered (only the error one-shot uses it). */
 export function drawOverlay(

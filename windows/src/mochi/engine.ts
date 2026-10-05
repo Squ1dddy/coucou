@@ -9,7 +9,7 @@ import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
 import { drawAccessory, makeH, type AccessoryName } from "./outfit3d";
 import {
-  ERROR_END, FIDGETS, FIDGET_LEN, OVERLAY_MIN_R, drawOverlay, overlayFor, overlayHasHands, overlayPose,
+  ERROR_END, FIDGETS, FIDGET_LEN, OVERLAY_MIN_R, drawMiniProp, drawOverlay, isMiniPropKind, overlayFor, overlayHasHands, overlayPose,
   type Activity, type FidgetKind, type OverlayKind, type Pose,
 } from "./props";
 
@@ -486,6 +486,13 @@ export class BotEngine {
     return this.overlayKind();
   }
 
+  /** The simplified prop a mini shows (state + activity); null for main, accessory minis, mid-morph. */
+  private miniPropKind(): OverlayKind | null {
+    if (!this.isMini || this.accessory || this.morph > 0.25) return null;
+    const kind = overlayFor(this.state, this.activity, null);
+    return isMiniPropKind(kind) ? kind : null;
+  }
+
   /** The error scene is a one-shot: animating only for its first ERROR_END seconds. */
   private overlayAnimating(): boolean {
     const kind = this.visibleOverlay();
@@ -955,10 +962,13 @@ export class BotEngine {
     x.restore();
 
     // The props replace the working/thinking/searching badge on the main Mochi.
-    if (this.badge && this.badgeS > 0.01 && this.morph < 0.25 && !overlay) {
+    // Minis get a simplified prop instead (accessory minis keep the badge).
+    const miniProp = this.miniPropKind();
+    if (this.badge && this.badgeS > 0.01 && this.morph < 0.25 && !overlay && !miniProp) {
       this.drawBadge(x, this.badge, R, cx, cy);
     }
     this.drawParticles(x, R, cx, cy);
+    if (miniProp) drawMiniProp(x, miniProp, R, cx, cy, this.ovT, this.ovT - this.stateAt);
     if (overlay) drawOverlay(x, overlay, R, cx, cy, this.ovT, this.bodyColor,
       this.ovT - (this.fidget ? this.fidgetStart : this.stateAt));
   }
