@@ -135,6 +135,11 @@ pub fn reveal_folder(path: &str) {
 }
 
 /// Our own `which`: the first executable file named `stem` on $PATH.
+/// There is no Claude desktop app on Linux; callers fall back to VS Code.
+pub fn focus_claude_app() -> bool {
+    false
+}
+
 pub fn find_on_path(stem: &str) -> Option<PathBuf> {
     let dirs = std::env::var_os("PATH")?;
     std::env::split_paths(&dirs)

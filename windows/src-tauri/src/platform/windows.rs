@@ -12,11 +12,16 @@ use ::windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use ::windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
 use ::windows::Win32::System::Ole::RevokeDragDrop;
 use ::windows::Win32::System::SystemInformation::GetLocalTime;
-use ::windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use ::windows::Win32::System::Threading::{
+    GetCurrentProcess, OpenProcess, OpenProcessToken, QueryFullProcessImageNameW,
+    PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use ::windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
 use ::windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, GetClassNameW, GetCursorPos, GetWindowLongPtrW, SetWindowLongPtrW,
-    GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    EnumChildWindows, EnumWindows, GetClassNameW, GetCursorPos, GetWindow, GetWindowLongPtrW,
+    GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    SetForegroundWindow, SetWindowLongPtrW, ShowWindow, GWL_EXSTYLE, GW_OWNER, SW_RESTORE,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 use super::LocalTime;
@@ -81,25 +86,57 @@ pub fn open_url(url: &str) {
         .spawn();
 }
 
-pub fn reveal_folder(path: &str) {
-    let _ = Command::new("explorer").arg(path).spawn();
+/// Brings the Claude desktop app's window to the front. Only a visible, titled,
+/// unowned top-level window of a `Claude.exe` counts: the Claude Code CLI shares
+/// that file name but never owns a window of its own (it lives in a console).
+pub fn focus_claude_app() -> bool {
+    let mut found = HWND::default();
+    unsafe {
+        let _ = EnumWindows(Some(find_claude_window), LPARAM(&mut found as *mut HWND as isize));
+    }
+    if found.is_invalid() {
+        return false;
+    }
+    unsafe {
+        if IsIconic(found).as_bool() {
+            let _ = ShowWindow(found, SW_RESTORE);
+        }
+        // Allowed: the click on the island was the last input event, and it was ours.
+        SetForegroundWindow(found).as_bool()
+    }
 }
 
-/// Our own `where`: walks %PATH% against %PATHEXT%, no shell involved.
-/// Rust quotes arguments correctly for `.cmd`/`.bat` targets since 1.77, so
-/// spawning `code.cmd` directly is safe.
-pub fn find_on_path(stem: &str) -> Option<PathBuf> {
-    let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
-    let dirs = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&dirs) {
-        for ext in exts.split(';').filter(|e| !e.is_empty()) {
-            let candidate = dir.join(format!("{stem}{}", ext.to_lowercase()));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
+unsafe extern "system" fn find_claude_window(hwnd: HWND, out: LPARAM) -> BOOL {
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool()
+            || GetWindowTextLengthW(hwnd) == 0
+            || GetWindow(hwnd, GW_OWNER).is_ok_and(|o| !o.is_invalid())
+        {
+            return true.into();
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return true.into();
+        };
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(process);
+        if !ok {
+            return true.into();
+        }
+        let path = String::from_utf16_lossy(&buf[..len as usize]);
+        let is_claude = path
+            .rsplit('\\')
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Claude.exe"));
+        if is_claude {
+            *(out.0 as *mut HWND) = hwnd;
+            return false.into(); // stop enumerating
         }
     }
-    None
+    true.into()
 }
 
 // ── Who we are ────────────────────────────────────────────────────────────────

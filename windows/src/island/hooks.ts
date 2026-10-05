@@ -132,7 +132,7 @@ function clearSession() {
   if (!t) return;
   t.steps = [];
   t.stepIndex = 0;
-  t.name = "VS Code";
+  t.name = "Claude Code";
   t.pillBadge = null;
 }
 
@@ -276,6 +276,26 @@ function handleHook(island: Island, payload: HookPayload) {
       // terminal. Approval support for other agents will come with Codex support.
       if (isExternalAgent) {
         if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
+        break;
+      }
+
+      // AskUserQuestion is not a yes/no permission: Allow would only let the
+      // question through and Deny would block Claude from asking. Hand it straight
+      // back so Claude Code shows its own picker, and just say questions are waiting.
+      if (payload.tool_name === "AskUserQuestion") {
+        if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
+        upsert(projectName, cwd);
+        const questions = (payload.tool_input as { questions?: unknown[] } | undefined)?.questions;
+        const count = Array.isArray(questions) ? questions.length : 1;
+        State.updateTask(CLAUDE_ID, "question");
+        State.appendStep(CLAUDE_ID, count > 1 ? `Claude has ${count} questions for you` : "Claude has a question for you");
+        Sound.play("question");
+        if (focused) {
+          island.alert("question");
+        } else {
+          State.setPillBadge(CLAUDE_ID, "approval");
+          island.reveal();
+        }
         break;
       }
 

@@ -12,6 +12,7 @@ mod secrets;
 mod settings;
 mod tray;
 
+#[cfg(not(windows))]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -135,10 +136,26 @@ fn open_url(url: String) {
     platform::open_url(&url);
 }
 
-/// "Open terminal" opens the working folder in VS Code when `code` is on PATH,
-/// and falls back to the file manager otherwise.
+/// "Open Claude" brings the Claude desktop app forward, launching it through its
+/// `claude://` handler when no window is open. Without that app (Linux), it opens
+/// the working folder in VS Code when `code` is on PATH, else the file manager.
 #[tauri::command]
-fn open_in_vscode(path: Option<String>) -> bool {
+fn open_session(path: Option<String>) -> bool {
+    if platform::focus_claude_app() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        let _ = path;
+        platform::open_url("claude://");
+        return true;
+    }
+    #[cfg(not(windows))]
+    open_folder_in_vscode(path)
+}
+
+#[cfg(not(windows))]
+fn open_folder_in_vscode(path: Option<String>) -> bool {
     // No shell anywhere near this. The path is a project folder chosen by
     // whoever is using Claude Code, and a shell would happily read `&`, `^`, `%`
     // or `$` in a folder name as syntax. Finding the launcher ourselves and
@@ -395,7 +412,7 @@ pub fn run() {
             focus_window,
             reposition,
             open_url,
-            open_in_vscode,
+            open_session,
             quit_app,
             hooks_status,
             hooks_preview,
