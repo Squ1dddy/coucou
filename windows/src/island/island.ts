@@ -99,6 +99,8 @@ export class Island {
   private greeting = new Greeting();
 
   private running = false;
+  /** Wakes the frame loop when the next idle fidget is due (the loop sleeps in plain idle). */
+  private fidgetTimer: number | null = null;
   private lastFrame = 0;
   private dirty = true;
   private canvasPx = 0;
@@ -736,6 +738,31 @@ export class Island {
     this.celebrate();
   }
 
+  /**
+   * One wake-up timer for the next idle fidget. Armed only while the island is
+   * shown and the stage is idle (engine.fidgetDueAt is null otherwise); always
+   * replaces the previous timer, so a hide or state change leaves none behind.
+   */
+  private syncFidgetTimer() {
+    if (this.fidgetTimer != null) {
+      window.clearTimeout(this.fidgetTimer);
+      this.fidgetTimer = null;
+    }
+    const due = this.engine.fidgetDueAt;
+    if (due == null || State.mode === "hidden") return;
+    const wait = Math.max(0, due * 1000 - performance.now()) + 5;
+    this.fidgetTimer = window.setTimeout(() => {
+      this.fidgetTimer = null;
+      if (State.mode !== "hidden") this.ensureRunning();
+    }, wait);
+  }
+
+  /** Dev: plays one fidget now (window.__coucouFidget). */
+  triggerFidget() {
+    this.engine.triggerFidget();
+    this.ensureRunning();
+  }
+
   ensureRunning() {
     if (this.running) return;
     this.running = true;
@@ -809,6 +836,10 @@ export class Island {
     // looping animation — breathing, ratelimit sweat, sleeping z's, the search
     // sweep — so a hidden island went on burning frames in exactly the states it
     // spends most of its life in. Geometry still has to finish retracting.
+    // Idle fidgets obey the same rule: engine.busy is true only while one is
+    // playing. Between fidgets nothing runs; a single setTimeout (syncFidgetTimer,
+    // armed when the loop stops and on state changes, never while hidden or
+    // outside idle) calls ensureRunning() at the due time. No intervals, no RAF.
     const settling =
       this.width.animating || this.height.animating || this.radius.animating;
     const busy = State.mode === "hidden"
@@ -824,6 +855,7 @@ export class Island {
     } else {
       this.running = false;
       Sound.idle();
+      this.syncFidgetTimer();
     }
   };
 
@@ -1202,6 +1234,7 @@ export class Island {
     pruneMiniBots();
     syncMiniBotStates(State.tasks);
     this.engine.setState(State.effectiveState);
+    this.syncFidgetTimer(); // cleared when the state left idle, re-armed (fresh gap) when it entered it
   }
 
   /** Applies settings coming from Rust at boot. */

@@ -172,6 +172,7 @@ export function registerHookHandlers(island: Island) {
   if (import.meta.env.DEV) {
     // Dev only: window.__coucouAnim("working", "bash") forces the stage Mochi's state and
     // activity for a visual check; window.__coucouAnim() clears it.
+    (window as unknown as { __coucouFidget?: () => void }).__coucouFidget = () => island.triggerFidget();
     (window as unknown as { __coucouAnim?: (s?: BotStateName, a?: Activity | null) => void }).__coucouAnim = (s, a) => {
       State.stateOverride = s ?? null;
       State.activityOverride = a ?? null;

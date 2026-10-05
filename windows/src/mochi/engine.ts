@@ -9,8 +9,8 @@ import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
 import { drawAccessory, makeH, type AccessoryName } from "./outfit3d";
 import {
-  ERROR_END, OVERLAY_MIN_R, drawOverlay, overlayFor, overlayHasHands, overlayPose,
-  type Activity, type OverlayKind, type Pose,
+  ERROR_END, FIDGETS, FIDGET_LEN, OVERLAY_MIN_R, drawOverlay, overlayFor, overlayHasHands, overlayPose,
+  type Activity, type FidgetKind, type OverlayKind, type Pose,
 } from "./props";
 
 export type { Activity } from "./props";
@@ -310,6 +310,14 @@ export class BotEngine {
   /** When the current state was entered (s); the error scene plays once from here. */
   private stateAt = now();
 
+  // Idle fidgets (main Mochi only): one every 20-40 s, ~3 s each, never the same twice running.
+  private fidget: FidgetKind | null = null;
+  private fidgetStart = 0;
+  private lastFidget: FidgetKind | null = null;
+  private nextFidgetAt = now() + 20 + Math.random() * 20;
+  /** Dev only (live demo page): [min, max] seconds between fidgets instead of 20-40. */
+  fidgetGapOverride: readonly [number, number] | null = null;
+
   lastTime = now();
   private t0 = now() - Math.random() * 5;
   private nextBlink = now() + 1.5 + Math.random() * 2;
@@ -331,6 +339,7 @@ export class BotEngine {
     const prev = this.state;
     this.state = next;
     this.stateAt = now();
+    this.cancelFidget();
     this.cfg = BOT_STATES[next];
     this.colT = this.cfg.color;
     if (!this.locks.has("tint")) this.tint = this.cfg.tint;
@@ -360,6 +369,9 @@ export class BotEngine {
         break;
       case "ratelimit":
         this.emit("sweat", 1);
+        break;
+      case "sleeping":
+        this.triggerEmote("yawn", 1.6); // once, on falling asleep
         break;
       default:
         if (prev !== "idle" || next !== "idle") this.blink();
@@ -419,6 +431,45 @@ export class BotEngine {
     this.accPresence = kind ? 1 : 0;
   }
 
+  /** The fidget playing now, or null. */
+  get currentFidget(): FidgetKind | null { return this.fidget; }
+
+  /** When the next fidget is due (performance.now()/1000 clock); null if none can run or one is playing. */
+  get fidgetDueAt(): number | null {
+    return this.fidgetEligible() && !this.fidget ? this.nextFidgetAt : null;
+  }
+
+  private fidgetEligible(): boolean {
+    return this.state === "idle" && !this.isMini && !this.accessory;
+  }
+
+  private scheduleFidget() {
+    const [lo, hi] = this.fidgetGapOverride ?? [20, 40];
+    this.nextFidgetAt = now() + lo + Math.random() * (hi - lo);
+  }
+
+  /** Stops a running fidget and restarts the wait. */
+  cancelFidget() {
+    this.fidget = null;
+    this.scheduleFidget();
+  }
+
+  /** Starts a fidget now (idle only); `kind` defaults to a random one that isn't a repeat. */
+  triggerFidget(kind?: FidgetKind) {
+    if (!this.fidgetEligible()) return;
+    if (!kind) {
+      const pool = FIDGETS.filter((f) => f !== this.lastFidget);
+      kind = pool[Math.floor(Math.random() * pool.length)];
+    }
+    this.fidget = kind;
+    this.lastFidget = kind;
+    this.fidgetStart = now();
+    if (kind === "stretch") {
+      this.anim("sy", [[1.18, 450, Ease.lin], [1.18, 400, Ease.lin], [1, 350, Ease.lin]]);
+      this.anim("sx", [[0.9, 450, Ease.lin], [0.9, 400, Ease.lin], [1, 350, Ease.lin]]);
+    }
+  }
+
   setActivity(a: Activity | null) {
     this.activity = a;
   }
@@ -426,7 +477,7 @@ export class BotEngine {
   /** The overlay playing right now (state + activity), before the size/morph guards. */
   private overlayKind(): OverlayKind | null {
     if (this.isMini || this.accessory) return null;
-    return overlayFor(this.state, this.activity);
+    return overlayFor(this.state, this.activity, this.fidget);
   }
 
   /** The overlay that is actually on screen: not mini, big enough, not mid-morph. */
@@ -466,6 +517,7 @@ export class BotEngine {
   }
 
   slap() {
+    this.cancelFidget();
     this.interruptGreet();
     if (this.state === "dizzy") return;
     const t = now();
@@ -490,6 +542,7 @@ export class BotEngine {
 
   /** Peek wave — the "coucou". Timings from BotEngine.greet(). */
   greet() {
+    this.cancelFidget();
     const t = now();
     const tok = ++this.greetToken;
     this.waveStart = t + 0.45;
@@ -658,7 +711,7 @@ export class BotEngine {
     return (
       this.tweens.size > 0 ||
       this.particles.length > 0 ||
-      this.overlayAnimating() ||
+      this.overlayAnimating() || this.fidget != null ||
       this.cfg.bounces || this.cfg.scans || this.cfg.breathes || this.cfg.zz || this.cfg.sweat ||
       this.isMini ||
       Math.abs(this.tgYaw - this.yaw) > 0.002 ||
@@ -708,9 +761,12 @@ export class BotEngine {
     const t = n - this.t0;
     // Overlay pose: its look beats the mouse look island.ts wrote this frame; the
     // rest (yaw, pitch, bob, sway) is applied after smoothing, below.
+    if (this.fidget && n - this.fidgetStart >= FIDGET_LEN) this.cancelFidget();
+    else if (!this.fidget && this.fidgetEligible() && n >= this.nextFidgetAt) this.triggerFidget();
     const overlay = this.visibleOverlay();
     this.ovT = n;
-    const pose: Pose | null = overlay ? overlayPose(overlay, n) : null;
+    const sceneAt = this.fidget ? this.fidgetStart : this.stateAt;
+    const pose: Pose | null = overlay ? overlayPose(overlay, n, n - sceneAt) : null;
     let ty = (pose?.lookX ?? this.lookX) * 0.62;
     let tp = (pose?.lookY ?? this.lookY) * 0.5;
 
@@ -903,7 +959,8 @@ export class BotEngine {
       this.drawBadge(x, this.badge, R, cx, cy);
     }
     this.drawParticles(x, R, cx, cy);
-    if (overlay) drawOverlay(x, overlay, R, cx, cy, this.ovT, this.bodyColor, this.ovT - this.stateAt);
+    if (overlay) drawOverlay(x, overlay, R, cx, cy, this.ovT, this.bodyColor,
+      this.ovT - (this.fidget ? this.fidgetStart : this.stateAt));
   }
 
   /** Brand prop, one pass. A pure read of engine state; no-op without an accessory. */

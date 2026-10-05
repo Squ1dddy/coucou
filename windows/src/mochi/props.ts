@@ -12,7 +12,13 @@
 import type { RGB } from "./engine";
 
 export type Activity = "typing" | "reading" | "bash" | "searching";
-export type OverlayKind = Activity | "thinking" | "approval" | "question" | "error" | "ratelimit";
+export type FidgetKind = "stretch" | "lookaround" | "hum" | "ball";
+export const FIDGETS: readonly FidgetKind[] = ["stretch", "lookaround", "hum", "ball"];
+/** A fidget plays this long (s), then Mochi is back to plain idle. */
+export const FIDGET_LEN = 3;
+
+export type OverlayKind =
+  | Activity | "thinking" | "approval" | "question" | "error" | "ratelimit" | "sleeping" | FidgetKind;
 
 /** The error scene plays once; it is over this many seconds after entering the state. */
 export const ERROR_END = 3.2;
@@ -44,7 +50,9 @@ export function handStyle(body: RGB | null): HandStyle {
 }
 
 /** Which overlay (if any) a state + activity plays. */
-export function overlayFor(state: string, activity: Activity | null): OverlayKind | null {
+export function overlayFor(state: string, activity: Activity | null, fidget: FidgetKind | null): OverlayKind | null {
+  if (state === "idle") return fidget;
+  if (state === "sleeping") return "sleeping";
   if (state === "thinking") return "thinking";
   if (state === "searching") return "searching";
   if (state === "approval" || state === "question" || state === "error" || state === "ratelimit") return state;
@@ -54,7 +62,8 @@ export function overlayFor(state: string, activity: Activity | null): OverlayKin
 
 /** Whether the overlay draws flat hands (the real side hands hide meanwhile). */
 export function overlayHasHands(kind: OverlayKind): boolean {
-  return kind !== "bash" && kind !== "error" && kind !== "ratelimit";
+  return kind === "typing" || kind === "reading" || kind === "searching" || kind === "thinking" ||
+    kind === "approval" || kind === "question" || kind === "ball";
 }
 
 /** What an overlay forces on the engine. Look wins over the mouse; the rest is set after smoothing. */
@@ -70,7 +79,8 @@ export interface Pose {
   sx?: number;
 }
 
-export function overlayPose(kind: OverlayKind, t: number): Pose {
+/** `k` = seconds since the scene began (state entry, or the fidget's start). */
+export function overlayPose(kind: OverlayKind, t: number, k = 0): Pose {
   switch (kind) {
     case "typing":
       return { lookX: 0, lookY: -0.45, oy: -Math.abs(Math.sin(t * 10.5)) * 0.025 };
@@ -91,6 +101,12 @@ export function overlayPose(kind: OverlayKind, t: number): Pose {
       return { lookX: 1.1, lookY: 0.1 };
     case "ratelimit":
       return { sy: 0.9, sx: 1.07 };
+    case "lookaround":
+      return { lookX: Math.sin(k * 3) * 1.2, lookY: Math.cos(k * 2) * 0.3 };
+    case "hum":
+      return { tilt: Math.sin(k * 4) * 0.08 };
+    case "ball":
+      return { lookX: 0.9, lookY: -0.2 + Math.abs(Math.sin(k * 3.2)) * 0.8 };
     default:
       return {};
   }
@@ -359,6 +375,61 @@ function drawRatelimit(x: CanvasRenderingContext2D, R: number, cx: number, cy: n
   x.restore();
 }
 
+function drawHum(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, k: number) {
+  const s = R / R_OTHER;
+  for (let i = 0; i < 2; i++) {
+    const nk = (k * 0.7 + i * 0.5) % 1;
+    x.save();
+    x.globalAlpha = 1 - nk;
+    text(x, i ? "\u266B" : "\u266A", cx + R * 0.7 + nk * 20 * s, cy - R * 0.4 - nk * 35 * s, 16 * s, "#F4F1EA", Math.sin(nk * 6) * 0.3);
+    x.restore();
+  }
+}
+
+function drawBall(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, k: number, hs: HandStyle) {
+  const s = R / R_OTHER;
+  const hx = cx + R * 0.95, hy = cy + R * 0.35, up = Math.abs(Math.sin(k * 3.2));
+  x.fillStyle = CYAN;
+  x.beginPath();
+  x.arc(hx, hy - 8 * s - up * R * 0.9, 6 * s, 0, Math.PI * 2);
+  x.fill();
+  hand(x, hx, hy, R * 0.17, hs, s);
+}
+
+/** Nightcap (slanted cone, band, pompom) and the pulsing snore bubble. */
+function drawSleeping(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, t: number) {
+  const s = R / R_OTHER;
+  x.save();
+  x.translate(cx - R * 0.1, cy - R * 0.78);
+  x.rotate(0.35);
+  x.fillStyle = "#5a6bd8";
+  x.beginPath();
+  x.moveTo(-R * 0.55, 0);
+  x.quadraticCurveTo(R * 0.2, -R * 0.9, R * 0.95, -R * 0.15);
+  x.lineTo(R * 0.55, 0);
+  x.closePath();
+  x.fill();
+  x.fillStyle = "#e8ecff";
+  x.beginPath();
+  x.roundRect(-R * 0.62, -4 * s, R * 1.24, 9 * s, 4 * s);
+  x.fill();
+  x.beginPath();
+  x.arc(R * 0.98, -R * 0.12, 6 * s, 0, Math.PI * 2);
+  x.fill();
+  x.restore();
+  const sb = 0.5 + 0.5 * Math.sin(t * 1.8);
+  x.save();
+  x.globalAlpha = 0.75;
+  x.strokeStyle = "#bfe8ff";
+  x.fillStyle = "rgba(191,232,255,0.25)";
+  x.lineWidth = 1.5 * s;
+  x.beginPath();
+  x.arc(cx + R * 0.5, cy + R * 0.35, (3 + sb * 9) * s, 0, Math.PI * 2);
+  x.fill();
+  x.stroke();
+  x.restore();
+}
+
 /** Draws one overlay in world coordinates, after the body and particles.
  *  `k` = seconds since the state was entered (only the error one-shot uses it). */
 export function drawOverlay(
@@ -377,6 +448,9 @@ export function drawOverlay(
     case "question": drawQuestion(x, R, cx, cy, t, hs); break;
     case "error": drawError(x, R, cx, cy, k); break;
     case "ratelimit": drawRatelimit(x, R, cx, cy, t); break;
+    case "hum": drawHum(x, R, cx, cy, k); break;
+    case "ball": drawBall(x, R, cx, cy, k, hs); break;
+    case "sleeping": drawSleeping(x, R, cx, cy, t); break;
   }
   x.restore();
 }
