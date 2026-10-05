@@ -263,6 +263,64 @@ function calcomCard(): HTMLElement {
   return h("div", { class: "int-card" }, header("#C9956A", "Cal.com", "Schedule"), rows);
 }
 
+// ── Live updates ──────────────────────────────────────────────────────────────
+// The Spotify progress moves between polls.
+// One light timer, on only while a live card is on screen and the island is
+// showing the overview, so a hidden island stays at 0% CPU.
+
+let liveTick: (() => void) | null = null;
+let liveTimer: number | null = null;
+
+function liveVisible(): boolean {
+  return State.mode !== "hidden" && State.view === "overview";
+}
+
+function stopLive() {
+  if (liveTimer != null) window.clearInterval(liveTimer);
+  liveTimer = null;
+}
+
+/** Starts or stops the timer to match the current card and visibility. */
+export function syncLiveTimer() {
+  if (liveTick && liveVisible()) {
+    if (liveTimer == null) {
+      liveTimer = window.setInterval(() => {
+        if (!liveTick || !liveVisible()) return stopLive();
+        liveTick();
+      }, 250);
+    }
+  } else {
+    stopLive();
+  }
+}
+
+/** Registers what the timer does; ends itself once its card has left the DOM. */
+function setLive(anchor: HTMLElement | null, tick: (() => void) | null) {
+  liveTick =
+    anchor && tick
+      ? () => {
+          if (!anchor.isConnected) {
+            liveTick = null;
+            return stopLive();
+          }
+          tick();
+        }
+      : null;
+}
+
+/**
+ * Part of the overview's re-render key for cards that depend on the clock.
+ * (None yet.)
+ */
+export function integrationCardSalt(_id: string): string {
+  return "";
+}
+
+/** True while the user drags the volume slider: a poll must not rebuild it. */
+export function integrationCardHeld(): boolean {
+  return volumeDragging;
+}
+
 // ── Spotify ───────────────────────────────────────────────────────────────────
 
 /** Last control failure ("Open Spotify on a device"); cleared by the next click or poll. */
@@ -276,18 +334,71 @@ function spotifyControl(action: "play" | "pause" | "next" | "previous") {
   });
 }
 
+/** The volume the user just set; shown instead of the polled one while Spotify catches up. */
+let volumePending: { pct: number; at: number } | null = null;
+let volumeDragging = false;
+let volumeDebounce: number | null = null;
+const VOLUME_HOLD_MS = 6000;
+
+function setVolume(pct: number) {
+  volumePending = { pct, at: Date.now() };
+  if (volumeDebounce != null) window.clearTimeout(volumeDebounce);
+  volumeDebounce = window.setTimeout(() => {
+    volumeDebounce = null;
+    spotifyNote = null;
+    Bridge.spotifyVolume(pct).catch((err) => {
+      volumePending = null;
+      spotifyNote = String(err).replace(/^Error:\s*/, "");
+      State.notify();
+    });
+  }, 200);
+}
+
+/** `m:ss` (or `h:mm:ss`) from milliseconds. */
+function clock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const s = String(total % 60).padStart(2, "0");
+  const m = Math.floor(total / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+/** The album art; the same <img> is reused across re-renders so a poll does not flash it. */
+let artCache: { url: string; el: HTMLImageElement } | null = null;
+
+function artTile(url: string, color: string): HTMLElement {
+  const placeholder = () =>
+    h("div", { class: "sp-art-empty", style: `background:${color}2e;color:${color}` }, svg(ICONS.musicNote, 34));
+  const tile = h("div", { class: "sp-art" });
+  if (!url) {
+    tile.append(placeholder());
+    return tile;
+  }
+  if (!artCache || artCache.url !== url) {
+    const img = h("img", { src: url, alt: "", draggable: "false" });
+    const entry = { url, el: img };
+    img.addEventListener("error", () => {
+      if (artCache === entry) artCache = null;
+      img.replaceWith(placeholder());
+    });
+    artCache = entry;
+  }
+  tile.append(artCache.el);
+  return tile;
+}
+
 function spotifyCard(task: AgentTask): HTMLElement {
   const d = get("integration_spotify");
   const title = typeof d.title === "string" ? d.title : "";
   const playing = d.playing === true;
   const trackUrl = typeof d.trackUrl === "string" ? d.trackUrl : "";
+  const artUrl = typeof d.artUrl === "string" ? d.artUrl : "";
   const color = task.color;
 
   const control = (icon: string, label: string, action: "play" | "pause" | "next" | "previous", big = false) =>
     h(
       "button",
       { class: big ? "sp-btn big" : "sp-btn", title: label, "aria-label": label, onclick: () => spotifyControl(action) },
-      svg(icon, big ? 12 : 10),
+      svg(icon, big ? 16 : 12),
     );
   const buttons = h(
     "div",
@@ -299,29 +410,85 @@ function spotifyCard(task: AgentTask): HTMLElement {
     control(ICONS.skipForward, "Next", "next"),
   );
 
-  const body = h("div", { class: "int-rows tight" });
-  if (!title) {
-    body.append(h("div", { class: "int-empty", text: spotifyNote ?? "Nothing playing" }));
-  } else {
-    const name = h("button", {
-      class: "sp-title",
-      title: trackUrl ? "Open in Spotify" : "",
-      text: title,
-      onclick: () => {
-        if (trackUrl) void Bridge.openUrl(trackUrl);
-      },
+  // Volume: hidden when Spotify says the device cannot be set (phones, some speakers).
+  const controlsRow = h("div", { class: "sp-row" }, buttons);
+  if (title && d.supportsVolume !== false) {
+    const held = volumePending && Date.now() - volumePending.at < VOLUME_HOLD_MS ? volumePending.pct : null;
+    const start = Math.round(held ?? (typeof d.volume === "number" ? d.volume : 50));
+    const slider = h("input", {
+      class: "sp-vol",
+      type: "range",
+      min: 0,
+      max: 100,
+      step: 1,
+      value: start,
+      "aria-label": "Volume",
+      style: `--p:${start}%;--c:${color}`,
     });
-    const progress = Number(d.progressMs ?? 0);
-    const duration = Number(d.durationMs ?? 0);
-    const fraction = duration > 0 ? Math.max(0, Math.min(1, progress / duration)) : 0;
-    const bar = h("div", { class: "sp-bar" }, h("i", { style: `width:${(fraction * 100).toFixed(1)}%;background:${color}` }));
-    body.append(
-      name,
-      h("div", { class: "sp-artist", text: spotifyNote ?? String(d.artist ?? "") }),
-      bar,
-    );
+    slider.addEventListener("input", () => {
+      const pct = Number(slider.value);
+      slider.style.setProperty("--p", `${pct}%`);
+      setVolume(pct);
+    });
+    slider.addEventListener("pointerdown", () => {
+      volumeDragging = true;
+      window.addEventListener(
+        "pointerup",
+        () => {
+          volumeDragging = false;
+          State.notify();
+        },
+        { once: true },
+      );
+    });
+    controlsRow.append(h("div", { class: "sp-volume" }, svg(ICONS.speakerOn, 12), slider));
   }
-  return h("div", { class: "int-card" }, header(color, "Spotify", playing ? "Playing" : "Player"), body, buttons);
+
+  const info = h("div", { class: "sp-info" });
+  info.append(h("div", { class: "int-kind", text: title ? (playing ? "Now playing" : "Paused") : "Spotify" }));
+  if (!title) {
+    info.append(h("div", { class: "int-empty sp-none", text: spotifyNote ?? "Nothing playing" }), controlsRow);
+    setLive(null, null);
+  } else {
+    info.append(
+      h("button", {
+        class: "sp-title",
+        title: trackUrl ? "Open in Spotify" : "",
+        text: title,
+        onclick: () => {
+          if (trackUrl) void Bridge.openUrl(trackUrl);
+        },
+      }),
+      h("div", { class: "sp-artist", text: spotifyNote ?? String(d.artist ?? "") }),
+    );
+
+    const base = Number(d.progressMs ?? 0);
+    const duration = Number(d.durationMs ?? 0);
+    const at = Date.now();
+    const elapsedEl = h("span", { class: "sp-time" });
+    const fill = h("i", { style: `background:${color}` });
+    const paint = (ms: number) => {
+      const text = clock(ms);
+      if (elapsedEl.textContent !== text) elapsedEl.textContent = text;
+      const pct = duration > 0 ? Math.max(0, Math.min(1, ms / duration)) * 100 : 0;
+      fill.style.width = `${pct.toFixed(2)}%`;
+    };
+    const now = () => (playing ? Math.min(duration || Infinity, base + Date.now() - at) : base);
+    paint(now());
+    info.append(
+      h(
+        "div",
+        { class: "sp-progress" },
+        elapsedEl,
+        h("div", { class: "sp-bar" }, fill),
+        h("span", { class: "sp-time", text: duration > 0 ? clock(duration) : "" }),
+      ),
+      controlsRow,
+    );
+    setLive(playing ? elapsedEl : null, playing ? () => paint(now()) : null);
+  }
+
+  return h("div", { class: "int-card sp" }, artTile(artUrl, color), info);
 }
 
 // ── Google Calendar ───────────────────────────────────────────────────────────
@@ -450,6 +617,7 @@ export function hasIntegrationData(id: string): boolean {
 }
 
 export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHooks): HTMLElement {
+  setLive(null, null); // only the Spotify card registers a timer below
   if (task.id === "integration_n8n") {
     const hasActivity = task.steps.length > 0 && (task.state === "finished" || task.state === "error");
     return hooks.detailOpen && hasActivity

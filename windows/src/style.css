@@ -1283,13 +1283,63 @@ input[type="range"]::-webkit-slider-thumb {
   padding-left: 8px;
 }
 
-/* Spotify card */
+/* Small muted label at the top of the Spotify panel. */
+.int-kind {
+  font: 500 10px var(--font);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim-3);
+  padding-right: 24px;
+}
+
+/* Spotify panel: art left, track, progress, controls and volume right. */
+.int-card.sp {
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 14px 18px 14px 14px;
+}
+
+.sp-art {
+  flex: 0 0 auto;
+  width: 108px;
+  height: 108px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--card-flat);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.sp-art img,
+.sp-art-empty {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sp-art-empty {
+  display: grid;
+  place-items: center;
+}
+
+.sp-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .sp-title {
   border: 0;
   background: transparent;
-  padding: 0 0 0 8px;
+  padding: 0;
+  margin-top: 2px;
   text-align: left;
-  font: 600 12px var(--font);
+  font: 600 16px var(--font);
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
@@ -1303,37 +1353,68 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .sp-artist {
-  padding-left: 8px;
-  font: 400 11px var(--font);
+  font: 400 12px var(--font);
   color: var(--dim-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.sp-none {
+  padding: 2px 0 0;
+  font-size: 12px;
+}
+
+.sp-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.sp-time {
+  flex: 0 0 auto;
+  min-width: 32px;
+  font: 400 10px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--dim-3);
+}
+
+.sp-time:last-child {
+  text-align: right;
+}
+
 .sp-bar {
-  height: 2px;
-  margin: 3px 8px 0;
-  border-radius: 1px;
-  background: rgba(255, 255, 255, 0.08);
+  flex: 1 1 auto;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
 }
 
 .sp-bar i {
   display: block;
   height: 100%;
+  border-radius: 2px;
+}
+
+.sp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 6px;
 }
 
 .sp-controls {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 0 0 8px;
+  gap: 8px;
 }
 
 .sp-btn {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   border: 0;
@@ -1344,12 +1425,60 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .sp-btn.big {
-  width: 24px;
-  height: 24px;
+  width: 36px;
+  height: 36px;
 }
 
 .sp-btn:hover {
   background: rgba(255, 255, 255, 0.14);
+}
+
+.sp-volume {
+  flex: 0 1 140px;
+  min-width: 80px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--dim-3);
+}
+
+.sp-volume svg {
+  flex: 0 0 auto;
+}
+
+.sp-vol {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 14px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: default;
+}
+
+.sp-vol::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--c) var(--p), rgba(255, 255, 255, 0.1) var(--p));
+}
+
+.sp-vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--ink);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.sp-vol:hover::-webkit-slider-thumb,
+.sp-vol:active::-webkit-slider-thumb,
+.sp-vol:focus-visible::-webkit-slider-thumb {
+  opacity: 1;
 }
 
 .int-pill {

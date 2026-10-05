@@ -10,7 +10,12 @@ import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { WheelStepper } from "../core/carousel";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
-import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
+import {
+  renderIntegrationCard,
+  integrationCardSalt,
+  integrationCardHeld,
+  syncLiveTimer,
+  type IntegrationCardHooks } from "./integrations";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -269,15 +274,21 @@ function buildOverview(actions: ViewActions): ViewHost {
         const key = [
           task.id, detailOpen, task.state, task.steps.join("|"),
           info?.loaded, info?.error, info?.configured,
-          JSON.stringify(info?.data ?? {}),
+          JSON.stringify(info?.data ?? {}), integrationCardSalt(task.id),
         ].join("~");
-        if (key !== cardKey) {
+        // A poll must not rebuild the volume slider under the user's finger.
+        const held = cardKey.startsWith(`${task.id}~`) && integrationCardHeld();
+        if (key !== cardKey && !held) {
+          // Same agent re-rendered (a poll, a clock tick): keep the list's scroll place.
+          const scroll = cardKey.startsWith(`${task.id}~`) ? detailBody.scrollTop : 0;
           cardKey = key;
           mode = "card";
           clear(detailBody);
           detailBody.append(renderIntegrationCard(task, hooks));
+          detailBody.scrollTop = scroll;
         }
       }
+      syncLiveTimer();
 
       jump.style.display = detailOpen ? "none" : "";
 

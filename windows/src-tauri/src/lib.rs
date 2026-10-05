@@ -313,6 +313,12 @@ async fn spotify_control(app: AppHandle, action: String) -> Result<(), String> {
     integrations::spotify_control(app, &action).await
 }
 
+/// Spotify volume slider in the card: 0-100.
+#[tauri::command]
+async fn spotify_volume(app: AppHandle, pct: u8) -> Result<(), String> {
+    integrations::spotify_volume(app, pct).await
+}
+
 /// Lets the island write to the same log as the Rust side.
 #[tauri::command]
 fn log_line(message: String) {
@@ -442,6 +448,7 @@ pub fn run() {
             oauth::oauth_disconnect,
             oauth::oauth_status,
             spotify_control,
+            spotify_volume,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

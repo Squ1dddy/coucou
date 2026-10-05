@@ -105,6 +105,8 @@ export const Bridge = {
   /** play | pause | next | previous. Rejects with a readable message. */
   spotifyControl: (action: "play" | "pause" | "next" | "previous") =>
     callOrThrow<void>("spotify_control", { action }),
+  /** Device volume 0-100. Rejects with a readable message. */
+  spotifyVolume: (pct: number) => callOrThrow<void>("spotify_volume", { pct }),
 
   /** Tray → Pause. Stops the integration pollers, not just the island. */
   setPaused: (paused: boolean) => call<void>("set_paused", { paused }),

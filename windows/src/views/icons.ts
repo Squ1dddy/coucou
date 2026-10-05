@@ -42,5 +42,7 @@ export const ICONS = {
   play: "M7.5 4.8v14.4L19 12 7.5 4.8z",
   pause: "M6.5 4.8h3.8v14.4H6.5V4.8zm7.2 0h3.8v14.4h-3.8V4.8z",
   skipForward: "M6 5.2 15 12l-9 6.8V5.2zM16 5h2.4v14H16V5z",
+  // music.note
+  musicNote: "M18.5 2.8 9.5 4.7v11.1A3.4 3.4 0 1 0 11.8 19V8.5l4.4-.95v6.55a3.4 3.4 0 1 0 2.3 3.2V2.8z",
   doc: "M6.5 2.6h7l4 4v14.8h-11V2.6zm6.6 1.6v3.3h3.3l-3.3-3.3zM8.6 11h6.8v1.5H8.6V11zm0 3.4h6.8v1.5H8.6v-1.5z",
 } as const;

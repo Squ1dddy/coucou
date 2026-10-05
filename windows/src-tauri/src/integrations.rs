@@ -700,7 +700,8 @@ async fn poll_spotify(app: AppHandle) {
         }
     };
     let response = client()
-        .get(format!("{SPOTIFY_API}/currently-playing?additional_types=episode"))
+        // `/me/player` (not `/currently-playing`) because only it reports the device volume.
+        .get(format!("{SPOTIFY_API}?additional_types=episode"))
         .bearer_auth(&token)
         .send()
         .await;
@@ -720,7 +721,7 @@ async fn poll_spotify(app: AppHandle) {
             // missing from the allowlist): keep it rather than a bare code.
             let body: Value = response.json().await.unwrap_or(json!({}));
             let reason = body.pointer("/error/message").and_then(Value::as_str).unwrap_or("");
-            log::line(format!("Spotify currently-playing HTTP {code}: {reason}"));
+            log::line(format!("Spotify player HTTP {code}: {reason}"));
             let message = if reason.is_empty() {
                 format!("Spotify error {code}")
             } else {
@@ -731,7 +732,23 @@ async fn poll_spotify(app: AppHandle) {
     }
 }
 
-/// The card's data from a `currently-playing` body. Empty body means not playing.
+/// The smallest image at least 200 px wide (sharp enough for the card without
+/// the 640 px download); otherwise the largest one. Images without a width
+/// count as 0, so a list with no widths yields its first (Spotify sorts largest first).
+fn pick_art(images: &[Value]) -> Option<&str> {
+    let width = |i: &Value| i.get("width").and_then(Value::as_u64).unwrap_or(0);
+    fn url(i: &Value) -> Option<&str> {
+        i.get("url").and_then(Value::as_str)
+    }
+    images
+        .iter()
+        .filter(|i| width(i) >= 200 && url(i).is_some())
+        .min_by_key(|i| width(i))
+        .or_else(|| images.iter().rev().filter(|i| url(i).is_some()).max_by_key(|i| width(i)))
+        .and_then(url)
+}
+
+/// The card's data from a `/me/player` body. Empty body means not playing.
 fn spotify_data(body: &Value) -> Value {
     let Some(item) = body.get("item").filter(|i| i.is_object()) else {
         return json!({ "playing": false });
@@ -750,16 +767,19 @@ fn spotify_data(body: &Value) -> Value {
     let show = item.get("show").and_then(|s| s.get("name")).and_then(Value::as_str);
     let artist = names(item.get("artists")).or_else(|| show.map(str::to_string));
     let album = item.get("album").and_then(|a| a.get("name")).and_then(Value::as_str).or(show);
-    // Images come largest first; the card only needs a small one.
     let art = item
         .get("album")
         .or_else(|| item.get("show"))
         .and_then(|a| a.get("images"))
         .and_then(Value::as_array)
-        .and_then(|imgs| imgs.last())
-        .and_then(|i| i.get("url"))
-        .and_then(Value::as_str);
+        .and_then(|imgs| pick_art(imgs));
+    let device = body.get("device").filter(|d| d.is_object());
     json!({
+        "volume": device.and_then(|d| d.get("volume_percent")).and_then(Value::as_u64),
+        "supportsVolume": device
+            .and_then(|d| d.get("supports_volume"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         "playing": body.get("is_playing").and_then(Value::as_bool).unwrap_or(false),
         "title": item.get("name").and_then(Value::as_str),
         "artist": artist,
@@ -780,7 +800,22 @@ pub async fn spotify_control(app: AppHandle, action: &str) -> Result<(), String>
         "previous" => (reqwest::Method::POST, "previous"),
         _ => return Err(format!("unknown action {action}")),
     };
-    if !spotify_allowed(&app) {
+    spotify_send(&app, method, path).await?;
+    // Spotify takes a moment to report the new state.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    poll_spotify(app).await;
+    Ok(())
+}
+
+/// Sets the device volume (0-100). No follow-up poll: the card already shows it.
+pub async fn spotify_volume(app: AppHandle, pct: u8) -> Result<(), String> {
+    let pct = pct.min(100);
+    spotify_send(&app, reqwest::Method::PUT, &format!("volume?volume_percent={pct}")).await
+}
+
+/// One authenticated, body-less call to the player API with readable errors.
+async fn spotify_send(app: &AppHandle, method: reqwest::Method, path: &str) -> Result<(), String> {
+    if !spotify_allowed(app) {
         return Err("Spotify is not connected".into());
     }
     let token = oauth::access_token(&oauth::SPOTIFY).await.map_err(|e| e.message())?;
@@ -802,9 +837,6 @@ pub async fn spotify_control(app: AppHandle, action: &str) -> Result<(), String>
         }
         code => return Err(format!("Spotify error {code}")),
     }
-    // Spotify takes a moment to report the new state.
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    poll_spotify(app).await;
     Ok(())
 }
 
@@ -1055,9 +1087,37 @@ mod tests {
         assert_eq!(d["playing"], true);
         assert_eq!(d["title"], "Song");
         assert_eq!(d["artist"], "A, B");
-        assert_eq!(d["artUrl"], "small");
+        // No widths listed: the first (largest) image.
+        assert_eq!(d["artUrl"], "big");
         assert_eq!(d["durationMs"], 200000);
         assert_eq!(d["trackUrl"], "https://open.spotify.com/track/1");
+        // No device in the body: no volume, and the slider is allowed.
+        assert_eq!(d["volume"], Value::Null);
+        assert_eq!(d["supportsVolume"], true);
+    }
+
+    #[test]
+    fn spotify_data_picks_sharp_art_and_reads_the_device_volume() {
+        let body = json!({
+            "is_playing": true,
+            "device": {"volume_percent": 35, "supports_volume": false},
+            "item": {
+                "name": "Song",
+                "album": {"name": "Album", "images": [
+                    {"url": "640", "width": 640}, {"url": "300", "width": 300}, {"url": "64", "width": 64}
+                ]}
+            }
+        });
+        let d = spotify_data(&body);
+        assert_eq!(d["artUrl"], "300");
+        assert_eq!(d["volume"], 35);
+        assert_eq!(d["supportsVolume"], false);
+
+        // Only small images: fall back to the largest.
+        let small = json!({"item": {"name": "S", "album": {"images": [
+            {"url": "64", "width": 64}, {"url": "150", "width": 150}
+        ]}}});
+        assert_eq!(spotify_data(&small)["artUrl"], "150");
     }
 
     #[test]
