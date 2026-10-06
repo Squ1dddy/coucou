@@ -37,6 +37,8 @@ export interface AgentTask {
   promptAt?: number | null;
   /** A long turn finished while this session was off stage: celebrate when it comes on. */
   celebratePending?: boolean;
+  /** Claude's turn ended while background subagents still run: busy until they finish. */
+  waitingOnSubs?: boolean;
   /** Last step appended (ms). */
   updatedAt?: number | null;
   /** Last hook event of any kind for this session (ms), for expiring dead sessions. */

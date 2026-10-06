@@ -62,6 +62,8 @@ export class Island {
   private snapCanvas!: HTMLCanvasElement;
   private greetingCanvas!: HTMLCanvasElement;
   private miniGrid!: HTMLElement;
+  /** Compact: how many subagents the main session has running ("+2"). */
+  private subCount!: HTMLElement;
   private countdown!: HTMLElement;
   private wakeStrip!: HTMLElement;
 
@@ -227,6 +229,7 @@ export class Island {
     this.botLayer = h("div", { id: "bot-layer" }, this.botGlow, this.snapCanvas, this.botCanvas);
     this.greetingCanvas = h("canvas", { id: "greeting-canvas" });
     this.miniGrid = h("div", { id: "mini-grid" });
+    this.subCount = h("div", { id: "sub-count" });
     this.countdown = h("div", { id: "countdown" });
 
     this.header = buildHeader(actions);
@@ -260,6 +263,7 @@ export class Island {
       this.clipEl,
       this.botLayer,
       this.miniGrid,
+      this.subCount,
       this.countdown,
     );
 
@@ -535,6 +539,8 @@ export class Island {
     // the state-driven DOM sync.
     this.miniGrid.style.left = `${w - 40 - 14.5}px`;
     this.miniGrid.style.top = `${hh / 2 - 14.5}px`;
+    this.subCount.style.left = `${this.botCx.value + this.botSize.value / 2 + 3}px`;
+    this.subCount.style.top = `${hh / 2 - 7}px`;
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
@@ -1219,6 +1225,11 @@ export class Island {
         pruneMiniBots();
       }
     }
+
+    const subs = State.focusTask?.subagents?.length ?? 0;
+    this.subCount.style.opacity = State.mode === "compact" && subs > 0 ? "1" : "0";
+    this.subCount.textContent = subs > 0 ? `+${subs}` : "";
+    this.subCount.title = subs === 1 ? "1 agent running" : `${subs} agents running`;
 
     // Rebuilt panels leave their old mini Mochis behind; stop ticking those.
     pruneMiniBots();

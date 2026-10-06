@@ -160,6 +160,21 @@ body {
 }
 
 /* Compact 2×2 mini grid, to the right of the notch. */
+/* Compact: "+2" next to the main Mochi while its subagents run. */
+#sub-count {
+  position: absolute;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: rgba(217, 119, 87, 0.22);
+  color: #e8a184;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
 #mini-grid {
   position: absolute;
   width: 29px;

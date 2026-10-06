@@ -162,12 +162,38 @@ function expireStaleSessions(except = "") {
   return stale.length > 0;
 }
 
+let islandRef: Island | null = null;
+const SUBS_DONE_GRACE_MS = 4000;
+
+/**
+ * A session waiting on background subagents lost its last one. Claude usually
+ * resumes the turn on its own (the result comes back as a prompt) and finishes
+ * then; if it stays quiet for a moment, finish it here with a replayed Stop.
+ */
+function checkSubsDone(taskId: string) {
+  const t = State.tasks.find((x) => x.id === taskId);
+  if (!t?.waitingOnSubs || (t.subagents?.length ?? 0) > 0) return;
+  const at = t.lastEventAt;
+  window.setTimeout(() => {
+    const now = State.tasks.find((x) => x.id === taskId);
+    if (!now?.waitingOnSubs || (now.subagents?.length ?? 0) > 0 || now.lastEventAt !== at) return;
+    now.waitingOnSubs = false;
+    if (islandRef && now.sessionId) {
+      handleHook(islandRef, {
+        hook_event_name: "Stop", session_id: now.sessionId,
+        cwd: now.sessionCwd ?? undefined, host_session_id: now.hostSessionId ?? undefined,
+      });
+    }
+  }, SUBS_DONE_GRACE_MS);
+}
+
 export function registerHookHandlers(island: Island) {
+  islandRef = island;
   window.setInterval(() => {
     // Nothing to expire or redraw while the island is hidden; the next event re-checks.
     if (State.mode !== "hidden") {
       expireStaleSessions();
-      State.expireSubagents(Date.now());
+      if (State.expireSubagents(Date.now())) State.tasks.forEach((t) => checkSubsDone(t.id));
     }
   }, 60_000);
 
@@ -257,6 +283,7 @@ function routeWorker(payload: HookPayload, name: string, sessionId: string): boo
   if (name === "SessionEnd") {
     workers.delete(sessionId);
     State.stopSubagent(parent.id, subId);
+    checkSubsDone(parent.id);
     return true;
   }
   if (name === "UserPromptSubmit" && payload.prompt) {
@@ -320,6 +347,8 @@ function handleHook(island: Island, payload: HookPayload) {
       t.lastEventAt = Date.now();
       // Every event carries it, so even a session that only finishes can be opened.
       if (payload.host_session_id) t.hostSessionId = payload.host_session_id;
+      // Claude picked the turn back up (often a background result arriving).
+      if (!payload.agent_id && (name === "UserPromptSubmit" || name === "PreToolUse")) t.waitingOnSubs = false;
       refreshLabel(t, sessionId, payload.transcript_path, name === "UserPromptSubmit" ? payload.prompt : undefined);
     }
   }
@@ -435,6 +464,14 @@ function handleHook(island: Island, payload: HookPayload) {
     case "Stop": {
       // Only Claude's own clean Stop after a long turn; subagent stops are SubagentStop.
       const stopTask = State.tasks.find((x) => x.id === agentId);
+      // Background subagents still at work: the session is not done, keep it busy.
+      if (!isExternalAgent && stopTask && (stopTask.subagents?.length ?? 0) > 0) {
+        stopTask.waitingOnSubs = true;
+        stopTask.toolAnim = null;
+        State.updateTask(agentId, "thinking");
+        break;
+      }
+      if (stopTask) stopTask.waitingOnSubs = false;
       const celebrate = !isExternalAgent && !payload.agent_id && !!stopTask &&
         shouldCelebrate(stopTask.promptAt, Date.now());
       // A finished agent off stage takes the stage, unless the user has the island open.
@@ -482,7 +519,10 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "SubagentStop":
-      if (!isExternalAgent && payload.agent_id) State.stopSubagent(agentId, payload.agent_id);
+      if (!isExternalAgent && payload.agent_id) {
+        State.stopSubagent(agentId, payload.agent_id);
+        checkSubsDone(agentId);
+      }
       break;
 
     case "PermissionRequest": {
