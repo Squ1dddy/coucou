@@ -22,6 +22,8 @@ export interface AgentTask {
   sessionCwd?: string | null;
   /** The Claude desktop app's id for this session (`local_…`); null when it runs in a terminal. */
   hostSessionId?: string | null;
+  /** A headless run (CLAUDE_CODE_SESSION_ATTENDED=0) still waiting for its parent chat to show up. */
+  unattended?: boolean;
   /** Claude Code session this entry is bound to (Claude tasks only). */
   sessionId?: string | null;
   /**
@@ -548,6 +550,8 @@ class AppState {
       main.stepIndex = next.stepIndex;
       main.sessionCwd = next.sessionCwd;
       main.hostSessionId = next.hostSessionId;
+      main.unattended = next.unattended;
+      main.waitingOnSubs = next.waitingOnSubs;
       main.project = next.project;
       main.label = next.label;
       main.sessionId = next.sessionId;
@@ -572,6 +576,8 @@ class AppState {
       main.sessionId = null;
       main.sessionCwd = null;
       main.hostSessionId = null;
+      main.unattended = false;
+      main.waitingOnSubs = false;
       main.project = null;
       main.label = null;
       main.startedAt = null;

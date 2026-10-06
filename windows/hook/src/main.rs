@@ -156,6 +156,8 @@ fn read_event() -> Option<(String, String)> {
         ("session_pid", "CLAUDE_CODE_SSE_PORT"),
         // The Claude desktop app's id for the session: lets the island open that chat.
         ("host_session_id", "CLAUDE_CODE_HOST_SESSION_ID"),
+        // "1" in a chat someone is in, "0" in a headless `claude -p` run.
+        ("session_attended", "CLAUDE_CODE_SESSION_ATTENDED"),
     ] {
         if !map.contains_key(key) {
             let value = std::env::var(var).unwrap_or_default();

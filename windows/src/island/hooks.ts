@@ -7,7 +7,7 @@ import { describeActivity } from "../core/activity";
 import { Bridge, onEvent } from "../core/bridge";
 import { shouldCelebrate } from "../core/celebrate";
 import { Sound } from "../core/sound";
-import { State, modelLabel, staleClaudeSessions, type AgentTask, type ClaudeUsage } from "../core/state";
+import { State, modelLabel, sessionLabel, staleClaudeSessions, type AgentTask, type ClaudeUsage } from "../core/state";
 import type { Island } from "./island";
 import type { Activity } from "../mochi/engine";
 import type { BotStateName } from "../core/layout";
@@ -35,6 +35,8 @@ interface HookPayload {
   host_session_id?: string;
   /** SessionStart: "startup" | "resume" | "clear" | "compact". */
   source?: string;
+  /** Set by coucou-hook from CLAUDE_CODE_SESSION_ATTENDED: "0" for a headless run. */
+  session_attended?: string;
   cwd?: string;
   message?: string;
   /** UserPromptSubmit carries `prompt`; `message` belongs to Notification/Stop. */
@@ -163,6 +165,9 @@ function expireStaleSessions(except = "") {
 }
 
 let islandRef: Island | null = null;
+/** A subagent this quiet when its parent stops again is treated as gone. */
+const SILENT_SUB_MS = 10 * 60 * 1000;
+const LIFECYCLE = new Set(["SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop"]);
 const SUBS_DONE_GRACE_MS = 4000;
 
 /**
@@ -244,34 +249,59 @@ async function resolveSubagentModel(
   State.notify();
 }
 
-/** Background runs (child session id → the parent entry they show up in). */
+/** Background runs (child session id → the session id of the chat they show up in). */
 const workers = new Map<string, string>();
 const workerSubId = (sessionId: string) => `w_${sessionId}`;
 
+/** Adds a background run to its parent chat as a helper. */
+function adoptWorker(parent: AgentTask, sessionId: string, description: string) {
+  // Keyed by session, not entry id: ending another entry can move this chat into main.
+  workers.set(sessionId, parent.sessionId!);
+  const subId = workerSubId(sessionId);
+  if (parent.subagents?.some((x) => x.agentId === subId)) return;
+  const now = Date.now();
+  (parent.subagents ??= []).push({
+    agentId: subId, type: "background", description: description || "Background session",
+    model: null, startedAt: now, lastActivity: "Starting…", lastEventAt: now,
+  });
+  State.notify();
+}
+
+/** The chat (someone is in it) that owns this desktop session id, if it has spoken yet. */
+const attendedParent = (host: string) =>
+  State.tasks.find((x) => x.hostSessionId === host && !x.unattended && !!x.sessionId);
+
 /**
- * A child `claude` process inherits its parent's CLAUDE_CODE_HOST_SESSION_ID, so a
- * new session with the desktop id of a still-running one is that session's helper.
- * A /clear also keeps the id, but it ends the old session first and says so in
- * `source`. Returns true when the event was a helper's and is handled.
+ * A chat spoke: headless runs that showed up before it (as entries of their own,
+ * e.g. after a restart) move into it as helpers.
+ */
+function adoptOrphans(parent: AgentTask) {
+  const host = parent.hostSessionId;
+  if (!host) return;
+  for (const t of State.tasks.filter((x) => x.unattended && x.hostSessionId === host && x.sessionId)) {
+    adoptWorker(parent, t.sessionId!, sessionLabel(t) ?? t.steps[0] ?? "");
+    State.endClaudeSession(t.sessionId!);
+  }
+}
+
+/**
+ * A child `claude -p` inherits its parent's CLAUDE_CODE_HOST_SESSION_ID but runs
+ * unattended (CLAUDE_CODE_SESSION_ATTENDED=0), so it is that chat's helper rather
+ * than a session of its own. Returns true when the event was a helper's and is handled.
  */
 function routeWorker(payload: HookPayload, name: string, sessionId: string): boolean {
   const host = payload.host_session_id;
-  let parentId = workers.get(sessionId);
-  let parent = parentId ? State.tasks.find((x) => x.id === parentId) : undefined;
-  if (parentId && !parent) workers.delete(sessionId);
+  const parentSid = workers.get(sessionId);
+  let parent = parentSid ? State.tasks.find((x) => x.sessionId === parentSid) : undefined;
+  if (parentSid && !parent) workers.delete(sessionId);
   if (!parent) {
-    if (!host || State.tasks.some((x) => x.sessionId === sessionId)) return false;
-    if (payload.source && payload.source !== "startup") return false;
-    parent = State.tasks.find((x) => x.hostSessionId === host && !!x.sessionId && x.sessionId !== sessionId);
+    if (!host || payload.session_attended !== "0") return false;
+    parent = attendedParent(host);
+    // No parent yet: it gets an entry of its own until the parent speaks.
     if (!parent) return false;
-    parentId = parent.id;
-    workers.set(sessionId, parentId);
-    const now = Date.now();
-    (parent.subagents ??= []).push({
-      agentId: workerSubId(sessionId), type: "background", description: "Background session",
-      model: null, startedAt: now, lastActivity: "Starting…", lastEventAt: now,
-    });
-    State.notify();
+    const own = State.tasks.find((x) => x.sessionId === sessionId);
+    adoptWorker(parent, sessionId, own ? (sessionLabel(own) ?? own.steps[0] ?? "") : "");
+    if (own) State.endClaudeSession(sessionId);
   }
   // A question needs an answer, so it goes through the normal path and its own entry.
   if (payload.request_id) {
@@ -307,6 +337,10 @@ function handleHook(island: Island, payload: HookPayload) {
   }
 
   const name = payload.hook_event_name ?? "";
+  // Lifecycle only (no tool calls, no text): enough to trace a stuck "+1" later.
+  if (LIFECYCLE.has(name)) {
+    void Bridge.log(`hook ${name} sess=${(payload.session_id ?? "").slice(0, 8)} agent=${(payload.agent_id ?? "-").slice(0, 8)} attended=${payload.session_attended ?? "-"}`);
+  }
   const cwd = payload.cwd ?? "";
   const raw = lastPathComponent(cwd);
   const projectName = aliasProjectName(raw || "Session");
@@ -322,6 +356,8 @@ function handleHook(island: Island, payload: HookPayload) {
   if (!isExternalAgent) {
     if (name === "SessionEnd") {
       if (sessionId) markEnded(sessionId);
+      // A helper's end drops it from its chat; it has no entry of its own to end.
+      if (sessionId && routeWorker(payload, name, sessionId)) return;
       State.endClaudeSession(sessionId);
       State.notify();
       return;
@@ -341,14 +377,27 @@ function handleHook(island: Island, payload: HookPayload) {
   const agentId = validAgent
     ? `agent_${validAgent}`
     : (State.bindClaudeSession(sessionId)?.id ?? CLAUDE_ID);
+  /** This turn picks up after background work: its clock keeps the original prompt's time. */
+  let resumed = false;
   if (!isExternalAgent) {
     const t = State.tasks.find((x) => x.id === agentId);
     if (t) {
       t.lastEventAt = Date.now();
       // Every event carries it, so even a session that only finishes can be opened.
       if (payload.host_session_id) t.hostSessionId = payload.host_session_id;
+      t.unattended = payload.session_attended === "0";
+      // After this event is handled: adopting can merge entries and move this one.
+      if (!t.unattended && sessionId) {
+        queueMicrotask(() => {
+          const chat = State.tasks.find((x) => x.sessionId === sessionId);
+          if (chat && !chat.unattended) adoptOrphans(chat);
+        });
+      }
       // Claude picked the turn back up (often a background result arriving).
-      if (!payload.agent_id && (name === "UserPromptSubmit" || name === "PreToolUse")) t.waitingOnSubs = false;
+      if (!payload.agent_id && (name === "UserPromptSubmit" || name === "PreToolUse")) {
+        resumed = !!t.waitingOnSubs;
+        t.waitingOnSubs = false;
+      }
       refreshLabel(t, sessionId, payload.transcript_path, name === "UserPromptSubmit" ? payload.prompt : undefined);
     }
   }
@@ -388,14 +437,18 @@ function handleHook(island: Island, payload: HookPayload) {
       {
         const t = State.tasks.find((x) => x.id === agentId);
         if (t) t.toolAnim = null;
-        if (t && !isExternalAgent) {
+        // A background result handed back to Claude is the same job carrying on, so
+        // the celebration clock (5 min) runs from the prompt that started it.
+        const notice = (payload.prompt ?? "").trimStart().startsWith("<task-notification");
+        if (t && !isExternalAgent && !resumed && !notice) {
           t.promptAt = Date.now();
           t.celebratePending = false;
         }
+        resumed ||= notice;
       }
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
-      if (asked) State.appendStep(agentId, asked.slice(0, 60));
+      if (asked && !resumed) State.appendStep(agentId, asked.slice(0, 60));
       surface("overview", false);
       break;
     }
@@ -464,6 +517,17 @@ function handleHook(island: Island, payload: HookPayload) {
     case "Stop": {
       // Only Claude's own clean Stop after a long turn; subagent stops are SubagentStop.
       const stopTask = State.tasks.find((x) => x.id === agentId);
+      // A subagent silent this long most likely ended without a word (a lost
+      // SubagentStop / SessionEnd, e.g. while Coucou restarted); it must not hold
+      // the session busy for the full 30-minute expiry.
+      if (!isExternalAgent && stopTask?.subagents?.length) {
+        const now = Date.now();
+        const live = stopTask.subagents.filter((x) => now - x.lastEventAt < SILENT_SUB_MS);
+        if (live.length !== stopTask.subagents.length) {
+          void Bridge.log(`stop: dropped ${stopTask.subagents.length - live.length} silent subagent(s)`);
+          stopTask.subagents = live;
+        }
+      }
       // Background subagents still at work: the session is not done, keep it busy.
       if (!isExternalAgent && stopTask && (stopTask.subagents?.length ?? 0) > 0) {
         stopTask.waitingOnSubs = true;
