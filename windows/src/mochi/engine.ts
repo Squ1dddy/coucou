@@ -486,9 +486,10 @@ export class BotEngine {
     return this.overlayKind();
   }
 
-  /** The simplified prop a mini shows (state + activity); null for main, accessory minis, mid-morph. */
-  private miniPropKind(): OverlayKind | null {
-    if (!this.isMini || this.accessory || this.morph > 0.25) return null;
+  /** The simplified prop a mini (or a main Mochi too small for its full props) shows; null for accessories, mid-morph. */
+  private miniPropKind(R = this.lastR): OverlayKind | null {
+    if (this.accessory || this.morph > 0.25) return null;
+    if (!this.isMini && R > OVERLAY_MIN_R) return null;
     const kind = overlayFor(this.state, this.activity, null);
     return isMiniPropKind(kind) ? kind : null;
   }
@@ -720,7 +721,7 @@ export class BotEngine {
       this.particles.length > 0 ||
       this.overlayAnimating() || this.fidget != null ||
       this.cfg.bounces || this.cfg.scans || this.cfg.breathes || this.cfg.zz || this.cfg.sweat ||
-      this.isMini ||
+      this.isMini || this.miniPropKind() != null ||
       Math.abs(this.tgYaw - this.yaw) > 0.002 ||
       Math.abs(this.tgPitch - this.pitch) > 0.002 ||
       Math.abs(this.tgTilt - this.tilt) > 0.002 ||
@@ -963,7 +964,7 @@ export class BotEngine {
 
     // The props replace the working/thinking/searching badge on the main Mochi.
     // Minis get a simplified prop instead (accessory minis keep the badge).
-    const miniProp = this.miniPropKind();
+    const miniProp = this.miniPropKind(R);
     if (this.badge && this.badgeS > 0.01 && this.morph < 0.25 && !overlay && !miniProp) {
       this.drawBadge(x, this.badge, R, cx, cy);
     }

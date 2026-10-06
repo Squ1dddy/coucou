@@ -375,16 +375,20 @@ function handleHook(island: Island, payload: HookPayload) {
       const stopTask = State.tasks.find((x) => x.id === agentId);
       const celebrate = !isExternalAgent && !payload.agent_id && !!stopTask &&
         shouldCelebrate(stopTask.promptAt, Date.now());
-      // Off stage: the finish chime and badge as before, the party waits for the focus.
-      if (celebrate && !focused && stopTask) stopTask.celebratePending = true;
+      // A finished agent off stage takes the stage, unless the user has the island open.
+      const takeStage = !focused && !!stopTask && State.mode !== "expanded";
+      if (takeStage) State.setFocus(agentId);
+      const onStage = focused || takeStage;
+      // Still off stage: the finish chime and badge as before, the party waits for the focus.
+      if (celebrate && !onStage && stopTask) stopTask.celebratePending = true;
       if (stopTask) stopTask.toolAnim = null;
       State.updateTask(agentId, "finished");
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
-      if (!(celebrate && focused)) Sound.play("finish");
-      if (focused) surface("finished", true);
+      if (!(celebrate && onStage)) Sound.play("finish");
+      if (onStage) surface("finished", true);
       else State.setPillBadge(agentId, "finished");
       // Once the finished view has had a moment to open; plays "proud" instead of "finish".
-      if (celebrate && focused) window.setTimeout(() => island.celebrate(), 350);
+      if (celebrate && onStage) window.setTimeout(() => island.celebrate(), 350);
       window.setTimeout(() => {
         if (isExternalAgent) {
           State.removeTask(agentId);
