@@ -28,6 +28,8 @@ export interface ViewActions {
   openClaude(): void;
   /** The ↗ button: opens whatever the focused pill points at. */
   openTarget(): void;
+  /** The X on a Claude session: drops it from the island (the session itself keeps running). */
+  closeSession(): void;
   openUrl(url: string): void;
   /** Claude panel: fly a subagent's mini Mochi to the stage and show its view. */
   drillIn(agentId: string, slot: HTMLElement): void;
@@ -182,7 +184,31 @@ function buildOverview(actions: ViewActions): ViewHost {
     { class: "icon-btn jump", title: "Open", onclick: () => actions.openTarget() },
     svg(ICONS.arrowUpRight, 8),
   );
-  const detail = card(null, detailBody, jump);
+  // Claude sessions get an X instead: first click arms it ("Close?"), a second within 3 s closes.
+  const closeIcon = svg(ICONS.xmark, 8);
+  const closeLabel = h("span", { class: "close-label", text: "Close?" });
+  let disarmTimer = 0;
+  const disarm = () => {
+    window.clearTimeout(disarmTimer);
+    closeBtn.classList.remove("armed");
+  };
+  const closeBtn = h(
+    "button",
+    {
+      class: "icon-btn jump close-btn", title: "Close session",
+      onclick: () => {
+        if (closeBtn.classList.contains("armed")) {
+          disarm();
+          actions.closeSession();
+          return;
+        }
+        closeBtn.classList.add("armed");
+        disarmTimer = window.setTimeout(disarm, 3000);
+      },
+    },
+    closeIcon, closeLabel,
+  );
+  const detail = card(null, detailBody, jump, closeBtn);
   detail.classList.add("detail-panel");
 
   // Left column: the island draws the bot over it; the name and dots live here.
@@ -356,7 +382,10 @@ function buildOverview(actions: ViewActions): ViewHost {
       }
       syncLiveTimer();
 
-      jump.style.display = detailOpen ? "none" : "";
+      const closable = task?.source === "claudeCode" && !!task.sessionId && !drillId;
+      if (changed || !closable) disarm();
+      jump.style.display = detailOpen || closable ? "none" : "";
+      closeBtn.style.display = !detailOpen && closable ? "" : "none";
 
       // Dot strip: one dot per agent, the current one longer; a finished / waiting /
       // failed agent glows in its badge colour.

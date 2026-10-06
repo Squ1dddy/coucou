@@ -154,6 +154,8 @@ fn read_event() -> Option<(String, String)> {
         ("term_session_id", "TERM_SESSION_ID"),
         ("vscode_pid", "VSCODE_PID"),
         ("session_pid", "CLAUDE_CODE_SSE_PORT"),
+        // The Claude desktop app's id for the session: lets the island open that chat.
+        ("host_session_id", "CLAUDE_CODE_HOST_SESSION_ID"),
     ] {
         if !map.contains_key(key) {
             let value = std::env::var(var).unwrap_or_default();

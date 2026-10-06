@@ -20,6 +20,8 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** The Claude desktop app's id for this session (`local_…`); null when it runs in a terminal. */
+  hostSessionId?: string | null;
   /** Claude Code session this entry is bound to (Claude tasks only). */
   sessionId?: string | null;
   /**
@@ -543,6 +545,7 @@ class AppState {
       main.steps = next.steps;
       main.stepIndex = next.stepIndex;
       main.sessionCwd = next.sessionCwd;
+      main.hostSessionId = next.hostSessionId;
       main.project = next.project;
       main.label = next.label;
       main.sessionId = next.sessionId;
@@ -566,6 +569,7 @@ class AppState {
       main.pendingAgents = [];
       main.sessionId = null;
       main.sessionCwd = null;
+      main.hostSessionId = null;
       main.project = null;
       main.label = null;
       main.startedAt = null;

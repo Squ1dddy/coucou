@@ -31,6 +31,10 @@ interface HookPayload {
   hook_event_name?: string;
   request_id?: string;
   session_id?: string;
+  /** Set by coucou-hook from CLAUDE_CODE_HOST_SESSION_ID (Claude desktop app sessions only). */
+  host_session_id?: string;
+  /** SessionStart: "startup" | "resume" | "clear" | "compact". */
+  source?: string;
   cwd?: string;
   message?: string;
   /** UserPromptSubmit carries `prompt`; `message` belongs to Notification/Stop. */
@@ -126,9 +130,10 @@ function refreshLabel(t: AgentTask, sessionId: string, transcript: string | unde
   });
 }
 
-function upsert(taskId: string, projectName: string, cwd: string) {
+function upsert(taskId: string, projectName: string, cwd: string, hostSession?: string) {
   const t = State.tasks.find((x) => x.id === taskId);
   if (!t) return;
+  if (hostSession) t.hostSessionId = hostSession;
   if (cwd) {
     t.sessionCwd = cwd;
     t.project = projectName;
@@ -213,6 +218,58 @@ async function resolveSubagentModel(
   State.notify();
 }
 
+/** Background runs (child session id → the parent entry they show up in). */
+const workers = new Map<string, string>();
+const workerSubId = (sessionId: string) => `w_${sessionId}`;
+
+/**
+ * A child `claude` process inherits its parent's CLAUDE_CODE_HOST_SESSION_ID, so a
+ * new session with the desktop id of a still-running one is that session's helper.
+ * A /clear also keeps the id, but it ends the old session first and says so in
+ * `source`. Returns true when the event was a helper's and is handled.
+ */
+function routeWorker(payload: HookPayload, name: string, sessionId: string): boolean {
+  const host = payload.host_session_id;
+  let parentId = workers.get(sessionId);
+  let parent = parentId ? State.tasks.find((x) => x.id === parentId) : undefined;
+  if (parentId && !parent) workers.delete(sessionId);
+  if (!parent) {
+    if (!host || State.tasks.some((x) => x.sessionId === sessionId)) return false;
+    if (payload.source && payload.source !== "startup") return false;
+    parent = State.tasks.find((x) => x.hostSessionId === host && !!x.sessionId && x.sessionId !== sessionId);
+    if (!parent) return false;
+    parentId = parent.id;
+    workers.set(sessionId, parentId);
+    const now = Date.now();
+    (parent.subagents ??= []).push({
+      agentId: workerSubId(sessionId), type: "background", description: "Background session",
+      model: null, startedAt: now, lastActivity: "Starting…", lastEventAt: now,
+    });
+    State.notify();
+  }
+  // A question needs an answer, so it goes through the normal path and its own entry.
+  if (payload.request_id) {
+    workers.delete(sessionId);
+    State.stopSubagent(parent.id, workerSubId(sessionId));
+    return false;
+  }
+  const subId = workerSubId(sessionId);
+  if (name === "SessionEnd") {
+    workers.delete(sessionId);
+    State.stopSubagent(parent.id, subId);
+    return true;
+  }
+  if (name === "UserPromptSubmit" && payload.prompt) {
+    const sub = parent.subagents?.find((x) => x.agentId === subId);
+    if (sub && sub.description === "Background session") sub.description = payload.prompt.trim().slice(0, 80);
+  }
+  const activity = name === "PreToolUse"
+    ? describeActivity(payload.tool_name ?? "Tool", payload.tool_input ?? {})
+    : undefined;
+  State.touchSubagent(parent.id, subId, activity);
+  return true;
+}
+
 function handleHook(island: Island, payload: HookPayload) {
   if (State.paused) {
     // Silence here used to cost Claude Code nearly two minutes: the relay waited
@@ -249,6 +306,9 @@ function handleHook(island: Island, payload: HookPayload) {
       return;
     }
   }
+  // A background `claude` run started from inside a session (auto-run workers and
+  // the like) lives in that session as a helper, not as a session of its own.
+  if (!isExternalAgent && sessionId && routeWorker(payload, name, sessionId)) return;
   // A new session may only take main once the old, silent one has been expired.
   if (!isExternalAgent && sessionId) expireStaleSessions(sessionId);
   const agentId = validAgent
@@ -258,6 +318,8 @@ function handleHook(island: Island, payload: HookPayload) {
     const t = State.tasks.find((x) => x.id === agentId);
     if (t) {
       t.lastEventAt = Date.now();
+      // Every event carries it, so even a session that only finishes can be opened.
+      if (payload.host_session_id) t.hostSessionId = payload.host_session_id;
       refreshLabel(t, sessionId, payload.transcript_path, name === "UserPromptSubmit" ? payload.prompt : undefined);
     }
   }
@@ -280,7 +342,7 @@ function handleHook(island: Island, payload: HookPayload) {
     if (isExternalAgent) {
       State.upsertExternalAgent(agentId, validAgent!, agentColor(validAgent!));
     } else {
-      upsert(agentId, projectName, cwd);
+      upsert(agentId, projectName, cwd, payload.host_session_id);
     }
   };
 
@@ -437,7 +499,7 @@ function handleHook(island: Island, payload: HookPayload) {
       // back so Claude Code shows its own picker, and just say questions are waiting.
       if (payload.tool_name === "AskUserQuestion") {
         if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
-        upsert(agentId, projectName, cwd);
+        upsert(agentId, projectName, cwd, payload.host_session_id);
         const questions = (payload.tool_input as { questions?: unknown[] } | undefined)?.questions;
         const count = Array.isArray(questions) ? questions.length : 1;
         State.updateTask(agentId, "question");
@@ -457,7 +519,7 @@ function handleHook(island: Island, payload: HookPayload) {
         if (requestId) void Bridge.approvalDecline(requestId);
         break;
       }
-      upsert(agentId, projectName, cwd);
+      upsert(agentId, projectName, cwd, payload.host_session_id);
       if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
       const tool = payload.tool_name ?? "Tool";
       const input = payload.tool_input ?? {};

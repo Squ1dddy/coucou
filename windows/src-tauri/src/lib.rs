@@ -150,7 +150,13 @@ fn agent_model(cwd: Option<String>, agent_type: String) -> Option<String> {
 /// `claude://` handler when no window is open. Without that app (Linux), it opens
 /// the working folder in VS Code when `code` is on PATH, else the file manager.
 #[tauri::command]
-fn open_session(path: Option<String>) -> bool {
+fn open_session(path: Option<String>, host_session: Option<String>) -> bool {
+    // A Claude desktop session opens straight to its chat. The id comes from a
+    // hook payload, so only the app's own shape (`local_` + uuid) goes into the URL.
+    if let Some(id) = host_session.filter(|id| is_host_session_id(id)) {
+        platform::open_url(&format!("claude://code/continue?session={id}"));
+        return true;
+    }
     if platform::focus_claude_app() {
         return true;
     }
@@ -162,6 +168,12 @@ fn open_session(path: Option<String>) -> bool {
     }
     #[cfg(not(windows))]
     open_folder_in_vscode(path)
+}
+
+fn is_host_session_id(id: &str) -> bool {
+    id.strip_prefix("local_").is_some_and(|rest| {
+        !rest.is_empty() && rest.len() <= 64 && rest.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    })
 }
 
 #[cfg(not(windows))]

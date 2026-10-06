@@ -551,6 +551,23 @@ body {
   z-index: 2;
 }
 
+/* Claude session X: arms into a red "Close?" pill, a second click closes. */
+.close-btn {
+  width: auto;
+  min-width: 16px;
+  padding: 0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: background 0.15s, color 0.15s, padding 0.15s;
+}
+.close-btn:hover { color: #e6e7ea; background: rgba(255, 255, 255, 0.14); }
+.close-btn .close-label { display: none; font-size: 10px; font-weight: 600; line-height: 16px; }
+.close-btn.armed { padding: 0 7px 0 5px; background: #d9534f; color: #fff; }
+.close-btn.armed .close-label { display: inline; }
+
 /* Ticker */
 
 .ticker {

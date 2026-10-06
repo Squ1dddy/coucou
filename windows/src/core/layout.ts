@@ -56,7 +56,7 @@ export const PANEL_H = 320;
 // No notch on a PC: these are the hidden/compact sizes from docs/SPEC.md.
 export const NOTCH_W = 184;
 export const NOTCH_H = 32;
-export const COMPACT_W = 288; // NOTCH_W + 104
+export const COMPACT_W = 232; // NOTCH_W + 48
 export const EXPANDED_W = 640;
 /** The overview carousel is wider than the other views (= PANEL_W). */
 export const OVERVIEW_W = 720;

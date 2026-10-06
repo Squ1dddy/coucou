@@ -46,6 +46,8 @@ const modeOrder = (m: IslandMode) => (m === "hidden" ? 0 : m === "compact" ? 1 :
 
 /** Seconds an island opened by an alert (not by you) stays open. */
 const ALERT_CLOSE_S = 5;
+/** Two clicks on the Mochi this close open its chat; a third this soon after makes it dizzy instead. */
+const DOUBLE_CLICK_MS = 350;
 export class Island {
   readonly fsm = new IslandStateMachine();
 
@@ -115,11 +117,9 @@ export class Island {
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
   private homeCollapseAt: number | null = null;
 
-  // Bot hover → love (IslandWindowController.botHoverIn)
-  private botHovering = false;
-  private botHoverTimer: number | null = null;
-  private lastLoveTime = 0;
-  private botHoverStart = { x: 0, y: 0 };
+  // Double-click on the Mochi → open its chat
+  private lastBotClickAt = 0;
+  private openChatTimer: number | null = null;
 
   private confusedRecovery: number | null = null;
   private prevViewBeforeConfused: IslandViewName = "overview";
@@ -158,7 +158,7 @@ export class Island {
       drillIn: (id, slot) => this.drillIn(id, slot),
       drillOut: () => this.drillOut(),
       openClaude: () => {
-        void Bridge.openSession(State.focusTask?.sessionCwd ?? null);
+        void Bridge.openSession(State.focusTask?.sessionCwd ?? null, State.focusTask?.hostSessionId ?? null);
         this.collapse();
       },
       // The ↗ button — same targets as openAgentTarget() on macOS.
@@ -171,9 +171,13 @@ export class Island {
           integration_notion: "https://notion.so",
           integration_calcom: "https://app.cal.com/bookings",
         };
-        if (task.source === "claudeCode") void Bridge.openSession(task.sessionCwd ?? null);
+        if (task.source === "claudeCode") void Bridge.openSession(task.sessionCwd ?? null, task.hostSessionId ?? null);
         else if (task.id === "integration_n8n") void Bridge.openN8n();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
+      },
+      closeSession: () => {
+        const task = State.focusTask;
+        if (task?.source === "claudeCode" && task.sessionId) State.endClaudeSession(task.sessionId);
       },
       openUrl: (url) => {
         if (url) void Bridge.openUrl(url);
@@ -589,7 +593,7 @@ export class Island {
         return;
       }
       if (this.isBotHit(e.clientX, e.clientY)) {
-        this.cancelBotHover();
+        this.onBotClick();
         this.engine.slap();
       }
     });
@@ -649,19 +653,6 @@ export class Island {
     }
     this.wasInIsland = inIsland;
 
-    // Bot hover → love
-    const overBot = State.mode === "expanded" && State.stateOverride == null && this.isBotHit(x, y);
-    if (overBot && !this.botHovering) this.botHoverIn(x, y);
-    if (!overBot && this.botHovering) this.cancelBotHover();
-    this.botHovering = overBot;
-    if (this.botHovering) {
-      const d = Math.hypot(x - this.botHoverStart.x, y - this.botHoverStart.y);
-      if (d > 40) {
-        this.botHoverStart = { x, y };
-        this.scheduleLove();
-      }
-    }
-
     this.ensureRunning();
   }
 
@@ -673,31 +664,30 @@ export class Island {
     return (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius;
   }
 
-  private botHoverIn(x: number, y: number) {
-    if (performance.now() / 1000 - this.lastLoveTime < 6) return;
-    this.botHoverStart = { x, y };
-    this.engine.blink();
-    this.engine.tgEs = 1.08;
-    Sound.play("hover");
-    this.scheduleLove();
-  }
-
-  private scheduleLove() {
-    if (this.botHoverTimer != null) window.clearTimeout(this.botHoverTimer);
-    this.botHoverTimer = window.setTimeout(() => {
-      this.botHoverTimer = null;
-      if (!this.botHovering || State.stateOverride != null) return;
-      if (performance.now() / 1000 - this.lastLoveTime < 6) return;
-      this.lastLoveTime = performance.now() / 1000;
-      this.engine.triggerEmote("love");
-      Sound.play("love");
-    }, 1900);
-  }
-
-  private cancelBotHover() {
-    if (this.botHoverTimer != null) window.clearTimeout(this.botHoverTimer);
-    this.botHoverTimer = null;
-    this.engine.tgEs = 1;
+  /**
+   * Double-click on a Claude session's Mochi opens its chat. The open waits a beat
+   * so a third click (dizzy) can still cancel it.
+   */
+  private onBotClick() {
+    const t = performance.now();
+    if (this.openChatTimer != null) {
+      window.clearTimeout(this.openChatTimer);
+      this.openChatTimer = null;
+      this.lastBotClickAt = 0;
+      return;
+    }
+    if (t - this.lastBotClickAt < DOUBLE_CLICK_MS) {
+      this.lastBotClickAt = 0;
+      this.openChatTimer = window.setTimeout(() => {
+        this.openChatTimer = null;
+        const task = State.focusTask;
+        if (task?.source !== "claudeCode" || !task.sessionId) return;
+        void Bridge.openSession(task.sessionCwd ?? null, task.hostSessionId ?? null);
+        this.collapse();
+      }, DOUBLE_CLICK_MS);
+      return;
+    }
+    this.lastBotClickAt = t;
   }
 
   /** Three slaps → dizzy + confused view for 3.3 s, then back. */

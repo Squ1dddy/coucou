@@ -53,7 +53,9 @@ export const Bridge = {
   openUrl: (url: string) => call<void>("open_url", { url }),
 
   /** "Open Claude" → the Claude desktop app; VS Code with the folder where there is none. */
-  openSession: (path: string | null) => call<boolean>("open_session", { path }),
+  /** Opens the session's own chat when the Claude desktop app runs it, else brings the app forward. */
+  openSession: (path: string | null, hostSession: string | null = null) =>
+    call<boolean>("open_session", { path, hostSession }),
 
   /** Model named by a subagent's definition file (`.claude/agents/<type>.md`), or null. */
   agentModel: (cwd: string | null, agentType: string) =>
