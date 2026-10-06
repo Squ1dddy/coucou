@@ -35,6 +35,8 @@ interface HookPayload {
   host_session_id?: string;
   /** SessionStart: "startup" | "resume" | "clear" | "compact". */
   source?: string;
+  /** Stop: Claude's final reply for the turn. */
+  last_assistant_message?: string;
   /** Set by coucou-hook from CLAUDE_CODE_SESSION_ATTENDED: "0" for a headless run. */
   session_attended?: string;
   cwd?: string;
@@ -252,6 +254,24 @@ async function resolveSubagentModel(
 /** Background runs (child session id → the session id of the chat they show up in). */
 const workers = new Map<string, string>();
 const workerSubId = (sessionId: string) => `w_${sessionId}`;
+
+/**
+ * The first sentence of Claude's final reply, without markdown, for the finished
+ * card; null when the reply opens with code or is empty.
+ */
+function replyHeadline(reply: string | undefined): string | null {
+  if (!reply) return null;
+  const line = reply.split(/\r?\n/).map((x) => x.trim()).find((x) => x.length > 0);
+  if (!line || line.startsWith("```") || line.startsWith("|")) return null;
+  const plain = line
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // [text](url) -> text
+    .replace(/^#+\s*|^[-*>]\s+|^\d+\.\s+/, "")
+    .replace(/[*_`~]/g, "")
+    .trim();
+  const sentence = plain.split(/(?<=[.!?])\s/)[0] ?? plain;
+  if (!sentence) return null;
+  return sentence.length > 90 ? `${sentence.slice(0, 87).trimEnd()}…` : sentence;
+}
 
 /** Adds a background run to its parent chat as a helper. */
 function adoptWorker(parent: AgentTask, sessionId: string, description: string) {
@@ -535,7 +555,10 @@ function handleHook(island: Island, payload: HookPayload) {
         State.updateTask(agentId, "thinking");
         break;
       }
-      if (stopTask) stopTask.waitingOnSubs = false;
+      if (stopTask) {
+        stopTask.waitingOnSubs = false;
+        stopTask.doneText = isExternalAgent ? null : replyHeadline(payload.last_assistant_message);
+      }
       const celebrate = !isExternalAgent && !payload.agent_id && !!stopTask &&
         shouldCelebrate(stopTask.promptAt, Date.now());
       // A finished agent off stage takes the stage, unless the user has the island open.

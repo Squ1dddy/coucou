@@ -41,6 +41,8 @@ export interface AgentTask {
   celebratePending?: boolean;
   /** Claude's turn ended while background subagents still run: busy until they finish. */
   waitingOnSubs?: boolean;
+  /** First sentence of Claude's final reply, shown on the finished card. */
+  doneText?: string | null;
   /** Last step appended (ms). */
   updatedAt?: number | null;
   /** Last hook event of any kind for this session (ms), for expiring dead sessions. */
