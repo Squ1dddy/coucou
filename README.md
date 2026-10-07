@@ -1,4 +1,4 @@
-> **This is Beau's fork.** It adds Claude Code session tracking, Spotify and Google Calendar to the Windows app. See [FORK.md](FORK.md) for what's new, how it was built and how to install it. The original is [Louis-CFM/coucou](https://github.com/Louis-CFM/coucou).
+> **This is Beau's fork.** It adds Claude Code session tracking, Spotify and Google Calendar to the Windows app. See [FORK.md](FORK.md) for what's new, how it was built and how to install it. The original is [Louis-CFM/coucou](https://github.com/Louis-CFM/coucou). Not affiliated with or endorsed by Louis Raillé; the Coucou name, Mochi and the sounds are his ([LICENSE-ASSETS.md](LICENSE-ASSETS.md)), and this fork publishes no builds.
 
 <div align="center">
 
