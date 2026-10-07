@@ -114,6 +114,14 @@ export function setSessionName(sessionId: string, name: string) {
   }
 }
 
+/** Moves the user's name for a session to the id it continues under (after /clear). */
+function moveSessionName(from: string, to: string) {
+  const name = sessionNames[from];
+  if (!name) return;
+  delete sessionNames[from];
+  setSessionName(to, name);
+}
+
 /** Stage name for a Claude session: the user's name, else title, else first prompt, else null (use the task name). */
 export function sessionLabel(t: AgentTask): string | null {
   if (t.sessionId && sessionNames[t.sessionId]) return sessionNames[t.sessionId];
@@ -525,6 +533,21 @@ class AppState {
     this.tasks.splice(at, 0, extra);
     this.notify();
     return extra;
+  }
+
+  /**
+   * A chat carries on under a new session id (/clear, or a compact that changed
+   * it): its entry, carousel slot, steps, title and custom name follow it.
+   */
+  rebindClaudeSession(from: string, to: string): AgentTask | null {
+    const task = this.tasks.find((t) => t.sessionId === from);
+    if (!task || !to || from === to) return task ?? null;
+    task.sessionId = to;
+    if (task.label?.session === from) task.label.session = to;
+    task.lastEventAt = Date.now();
+    moveSessionName(from, to);
+    this.notify();
+    return task;
   }
 
   /**

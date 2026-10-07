@@ -35,6 +35,8 @@ interface HookPayload {
   host_session_id?: string;
   /** SessionStart: "startup" | "resume" | "clear" | "compact". */
   source?: string;
+  /** SessionEnd: "clear" | "logout" | "prompt_input_exit" | "other" | … */
+  reason?: string;
   /** Stop: Claude's final reply for the turn. */
   last_assistant_message?: string;
   /** Set by coucou-hook from CLAUDE_CODE_SESSION_ATTENDED: "0" for a headless run. */
@@ -164,6 +166,75 @@ function expireStaleSessions(except = "") {
   // that speaks again later simply binds like a new one.
   for (const sid of stale) State.endClaudeSession(sid);
   return stale.length > 0;
+}
+
+/**
+ * Chats that may have just run /clear (old session id → timer that ends the
+ * entry). The entry waits here for the SessionStart that carries the chat's new
+ * session id. The terminal says `reason: "clear"`; the desktop app ends with
+ * "other" and starts with "startup", so there any end of a chat waits briefly
+ * for a new start under the same desktop session id.
+ */
+const clearing = new Map<string, number>();
+const CLEAR_GRACE_MS = 30_000;
+/** Desktop chat end without a stated reason: a /clear restarts within about a second. */
+const HOST_END_GRACE_MS = 8_000;
+/** A SessionStart that beat its own SessionEnd (separate hook processes) is this fresh. */
+const CLEAR_RACE_MS = 5_000;
+
+/** Same chat: same desktop session id, else (terminal, no id) same folder. */
+function sameChat(t: AgentTask, host: string | undefined, cwd: string) {
+  if (t.unattended) return false;
+  return host ? t.hostSessionId === host : !t.hostSessionId && !!cwd && t.sessionCwd === cwd;
+}
+
+/** The chat's entry moves to its new session id. */
+function rebind(from: string, to: string) {
+  const timer = clearing.get(from);
+  if (timer !== undefined) window.clearTimeout(timer);
+  clearing.delete(from);
+  State.rebindClaudeSession(from, to);
+  for (const [child, parent] of workers) if (parent === from) workers.set(child, to);
+  void Bridge.log(`rebind ${from.slice(0, 8)} -> ${to.slice(0, 8)}`);
+}
+
+/**
+ * SessionEnd from /clear: keep the entry for the chat's next session id. Returns
+ * false when there is no such entry to keep.
+ */
+function holdForClear(payload: HookPayload, sessionId: string, graceMs: number): boolean {
+  const task = State.tasks.find((t) => t.sessionId === sessionId);
+  if (!task || task.unattended) return false;
+  // The new session's SessionStart may already be here, as an entry of its own.
+  const fresh = State.tasks.find((t) =>
+    t !== task && t.sessionId && sameChat(t, payload.host_session_id, payload.cwd ?? "")
+    && t.steps.length === 0 && Date.now() - (t.startedAt ?? 0) < CLEAR_RACE_MS);
+  if (fresh?.sessionId) {
+    const to = fresh.sessionId;
+    State.endClaudeSession(to);
+    rebind(sessionId, to);
+    return true;
+  }
+  clearing.set(sessionId, window.setTimeout(() => {
+    clearing.delete(sessionId);
+    State.endClaudeSession(sessionId);
+  }, graceMs));
+  return true;
+}
+
+/** SessionStart after /clear (or a compact under a new id): the held entry takes the new id. */
+function resumeCleared(payload: HookPayload, sessionId: string) {
+  if (State.tasks.some((t) => t.sessionId === sessionId)) return;
+  const host = payload.host_session_id;
+  const cwd = payload.cwd ?? "";
+  const held = State.tasks.find((t) =>
+    t.sessionId && (clearing.has(t.sessionId) || (payload.source === "compact" && !!host))
+    && sameChat(t, host, cwd));
+  // Fallback: exactly one held chat in this folder (in case the desktop id changed too).
+  const inFolder = held ? [] : State.tasks.filter((t) =>
+    t.sessionId && clearing.has(t.sessionId) && !t.unattended && !!cwd && t.sessionCwd === cwd);
+  const match = held ?? (inFolder.length === 1 ? inFolder[0] : undefined);
+  if (match?.sessionId) rebind(match.sessionId, sessionId);
 }
 
 let islandRef: Island | null = null;
@@ -359,7 +430,7 @@ function handleHook(island: Island, payload: HookPayload) {
   const name = payload.hook_event_name ?? "";
   // Lifecycle only (no tool calls, no text): enough to trace a stuck "+1" later.
   if (LIFECYCLE.has(name)) {
-    void Bridge.log(`hook ${name} sess=${(payload.session_id ?? "").slice(0, 8)} agent=${(payload.agent_id ?? "-").slice(0, 8)} attended=${payload.session_attended ?? "-"}`);
+    void Bridge.log(`hook ${name} sess=${(payload.session_id ?? "").slice(0, 8)} agent=${(payload.agent_id ?? "-").slice(0, 8)} attended=${payload.session_attended ?? "-"} why=${payload.reason ?? payload.source ?? "-"} host=${(payload.host_session_id || "-").slice(0, 14)}`);
   }
   const cwd = payload.cwd ?? "";
   const raw = lastPathComponent(cwd);
@@ -378,6 +449,12 @@ function handleHook(island: Island, payload: HookPayload) {
       if (sessionId) markEnded(sessionId);
       // A helper's end drops it from its chat; it has no entry of its own to end.
       if (sessionId && routeWorker(payload, name, sessionId)) return;
+      // /clear: same chat, new session id next. Its entry and name carry over.
+      if (sessionId && payload.session_attended !== "0") {
+        const grace = payload.reason === "clear" ? CLEAR_GRACE_MS
+          : payload.host_session_id ? HOST_END_GRACE_MS : 0;
+        if (grace && holdForClear(payload, sessionId, grace)) return;
+      }
       State.endClaudeSession(sessionId);
       State.notify();
       return;
@@ -392,6 +469,9 @@ function handleHook(island: Island, payload: HookPayload) {
   // A background `claude` run started from inside a session (auto-run workers and
   // the like) lives in that session as a helper, not as a session of its own.
   if (!isExternalAgent && sessionId && routeWorker(payload, name, sessionId)) return;
+  if (!isExternalAgent && sessionId && name === "SessionStart" && payload.session_attended !== "0") {
+    resumeCleared(payload, sessionId);
+  }
   // A new session may only take main once the old, silent one has been expired.
   if (!isExternalAgent && sessionId) expireStaleSessions(sessionId);
   const agentId = validAgent
