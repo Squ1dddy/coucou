@@ -10,8 +10,11 @@ export class IslandStateMachine {
 
   /** home → petit delay, seconds. */
   homeToPetitDelay = 15;
-  /** petit → hidden delay, seconds. 0 = never hide (Beau's build: the compact bar stays put). */
+  /** petit → hidden delay, seconds. 0 = never hide (Beau's build: the compact bar stays put
+   *  unless the tray's "Hover to show" is on). */
   petitToHiddenDelay = 0;
+  /** Hover to show: the wake strip opens the island fully instead of to compact. */
+  wakeToHome = false;
   /** coucou → petit once the greeting animation ends (no hover). */
   greetAutoCollapseDelay = 0.6;
   /** coucou → petit while the mouse hovers the greeting. */
@@ -34,7 +37,7 @@ export class IslandStateMachine {
     switch (this.state) {
       case "hidden":
         this.cancelTimers();
-        this.transition("petit");
+        this.transition(this.wakeToHome ? "home" : "petit");
         break;
       case "petit":
         this.clear("petitHide");

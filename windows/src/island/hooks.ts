@@ -516,7 +516,8 @@ function handleHook(island: Island, payload: HookPayload) {
       if (isAlert) island.setView(view);
     } else if (isAlert) {
       island.alert(view);
-    } else if (State.mode === "hidden") {
+    } else if (State.mode === "hidden" && !State.settings.hoverToShow) {
+      // Hover to show keeps the island tucked away until the cursor or an alert asks.
       island.reveal();
     }
   };

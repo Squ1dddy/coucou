@@ -252,6 +252,9 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
+  /** Tray "Hover to show": compact hides after hoverHideDelay s, the top strip opens it fully. */
+  hoverToShow: boolean;
+  hoverHideDelay: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -264,6 +267,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  hoverToShow: false,
+  hoverHideDelay: 7,
 };
 
 type Listener = () => void;

@@ -294,6 +294,7 @@ export class Island {
           if (!this.wasInIsland) this.fsm.mouseLeft();
           break;
         case "home":
+          if (from === "hidden") Sound.play("peek");
           this.expand(State.defaultView());
           if (!this.wasInIsland) this.fsm.mouseLeft();
           break;
@@ -1243,7 +1244,19 @@ export class Island {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+    this.applyHoverToShow();
     State.notify();
+  }
+
+  /** Tray "Hover to show": arms or disarms the compact → hidden timer right away. */
+  private applyHoverToShow() {
+    const { hoverToShow, hoverHideDelay } = State.settings;
+    const turnedOff = this.fsm.wakeToHome && !hoverToShow;
+    this.fsm.petitToHiddenDelay = hoverToShow ? hoverHideDelay : 0;
+    this.fsm.wakeToHome = hoverToShow;
+    if (this.fsm.state === "petit" && !this.wasInIsland) this.fsm.mouseLeft();
+    // Only bring it back when the toggle went off: boot and Pause keep their own hidden.
+    else if (this.fsm.state === "hidden" && turnedOff && !State.paused) this.fsm.reveal();
   }
 
   get panelSize() {

@@ -101,9 +101,25 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
     let pref = island::effective_screen(&app);
     shared.gate.collapsed.store(collapsed, Ordering::Relaxed);
     island::apply_geometry(&app, &pref, collapsed);
+    // Park the poll before clearing click-through, so its last tick can't undo it.
+    if collapsed {
+        shared.gate.set_active(false);
+    }
     // The wake strip must always take the mouse, and a resize invalidates the flag.
     island::refresh_click_through(&app, &shared.gate);
-    shared.gate.set_active(!collapsed);
+    if collapsed {
+        // Belt and braces: once any tick in flight has finished, clear it again.
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let Some(shared) = handle.try_state::<Shared>() else { return };
+            if shared.gate.collapsed.load(Ordering::Relaxed) {
+                island::refresh_click_through(&handle, &shared.gate);
+            }
+        });
+    } else {
+        shared.gate.set_active(true);
+    }
 }
 
 /// The front end pushes the island shape; Rust decides click-through from it.
@@ -404,6 +420,21 @@ pub fn swap_display(app: &AppHandle) {
     shared.swapped.fetch_xor(true, Ordering::Relaxed);
     log::line(format!("tray: island moved to {} display", island::effective_screen(app)));
     island::move_to_display(app);
+}
+
+/// Tray "Hover to show": saved like any preference and pushed to the island.
+pub fn set_hover_to_show(app: &AppHandle, on: bool) {
+    let Some(shared) = app.try_state::<Shared>() else { return };
+    let updated = {
+        let mut current = shared.settings.lock().unwrap();
+        current.hover_to_show = on;
+        current.clone()
+    };
+    if let Err(e) = settings::save(&updated) {
+        log::line(format!("settings: save failed: {e}"));
+    }
+    log::line(format!("tray: hover to show {}", if on { "on" } else { "off" }));
+    let _ = app.emit("settings-changed", updated);
 }
 
 pub fn show_settings_window(app: &AppHandle) {

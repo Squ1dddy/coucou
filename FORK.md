@@ -22,7 +22,9 @@ the Windows (Tauri) version in `windows/`; the Mac app is untouched.
 - A flat, Claude-orange look. Mochi acts out what it's doing: laptop, thought
   cloud, magnifier, page, terminal. It fidgets when idle and wears a nightcap to
   sleep.
-- The compact island is narrower and never auto-hides.
+- The compact island is narrower and never auto-hides, unless you turn on
+  **Hover to show** in the tray: then it hides after a few seconds (set in
+  Settings) and opens fully when the cursor reaches the top of the screen.
 
 **Integrations**
 - Spotify: album art, progress, playback controls and volume, with Mochi

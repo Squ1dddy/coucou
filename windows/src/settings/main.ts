@@ -439,6 +439,17 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  const hoverHide = h("input", {
+    type: "number", min: "1", max: "120", step: "1",
+    value: String(Math.round(settings.hoverHideDelay)),
+    style: "width:72px",
+  }) as HTMLInputElement;
+  hoverHide.addEventListener("change", () => {
+    settings.hoverHideDelay = Math.max(1, Math.min(120, Number(hoverHide.value) || 7));
+    hoverHide.value = String(settings.hoverHideDelay);
+    void save();
+  });
+
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: "Main display" }),
@@ -464,6 +475,11 @@ function generalSection(): HTMLElement {
       h("label", { text: "Auto-close" }),
       autoClose,
       h("span", { class: "hint", text: "seconds after you leave the island" }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Hover to show" }),
+      hoverHide,
+      h("span", { class: "hint", text: "seconds before the compact island hides (turn on in the tray menu)" }),
     ),
     h("div", { class: "row" },
       h("label", { text: "Island lives on" }),

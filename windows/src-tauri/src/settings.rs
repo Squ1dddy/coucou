@@ -21,6 +21,16 @@ pub struct Settings {
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
+    /// Tray "Hover to show": the compact island hides after `hover_hide_delay`
+    /// seconds and opens fully when the cursor reaches the top of the screen.
+    #[serde(default)]
+    pub hover_to_show: bool,
+    #[serde(default = "default_hover_hide_delay")]
+    pub hover_hide_delay: f64,
+}
+
+fn default_hover_hide_delay() -> f64 {
+    7.0
 }
 
 fn default_model() -> String {
@@ -42,6 +52,8 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
+            hover_to_show: false,
+            hover_hide_delay: default_hover_hide_delay(),
         }
     }
 }
