@@ -1,3 +1,5 @@
+> **This is Beau's fork.** It adds Claude Code session tracking, Spotify and Google Calendar to the Windows app. See [FORK.md](FORK.md) for what's new, how it was built and how to install it. The original is [Louis-CFM/coucou](https://github.com/Louis-CFM/coucou).
+
 <div align="center">
 
 <img src="NotchBuddy/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="96" alt="Coucou icon">
