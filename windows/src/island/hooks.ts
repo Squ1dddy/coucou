@@ -339,7 +339,13 @@ function replyHeadline(reply: string | undefined): string | null {
     .replace(/^#+\s*|^[-*>]\s+|^\d+\.\s+/, "")
     .replace(/[*_`~]/g, "")
     .trim();
-  const sentence = plain.split(/(?<=[.!?])\s/)[0] ?? plain;
+  // A bare "Good." says nothing: keep adding sentences while the headline is short and fits.
+  const parts = plain.split(/(?<=[.!?])\s+/);
+  let sentence = parts[0] ?? plain;
+  for (const next of parts.slice(1)) {
+    if (sentence.length >= 25 || sentence.length + 1 + next.length > 90) break;
+    sentence = `${sentence} ${next}`;
+  }
   if (!sentence) return null;
   return sentence.length > 90 ? `${sentence.slice(0, 87).trimEnd()}…` : sentence;
 }
